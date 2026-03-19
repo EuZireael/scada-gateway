@@ -1,6 +1,26 @@
 spring:
   application:
     name: scada-gateway
+  
+  datasource:
+    url: jdbc:postgresql://localhost:5432/scada_db
+    username: scada_user
+    password: scada_password
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  
   docker:
     compose:
       enabled: false
@@ -14,67 +34,67 @@ opcua:
       enabled: true
 
       tags:
-        - nodeId: "ns=2;i=3"           # Speed
+        - nodeId: "ns=2;i=3"
           name: "Motor Speed"
           dataType: "INT"
           pollingRate: 1000
           enabled: true
           unit: "rpm"
 
-        - nodeId: "ns=2;i=4"           # Current
+        - nodeId: "ns=2;i=4"
           name: "Motor Current"
           dataType: "FLOAT"
           pollingRate: 1000
           enabled: true
           unit: "A"
 
-        - nodeId: "ns=2;i=5"           # Temperature
+        - nodeId: "ns=2;i=5"
           name: "Motor Temperature"
           dataType: "FLOAT"
           pollingRate: 2000
           enabled: true
           unit: "°C"
 
-        - nodeId: "ns=2;i=6"           # Running
+        - nodeId: "ns=2;i=6"
           name: "Motor Running"
           dataType: "BOOLEAN"
           pollingRate: 1000
           enabled: true
 
-        - nodeId: "ns=2;i=8"           # Pressure
+        - nodeId: "ns=2;i=8"
           name: "Pump Pressure"
           dataType: "FLOAT"
           pollingRate: 1000
           enabled: true
           unit: "bar"
 
-        - nodeId: "ns=2;i=9"           # Flow
+        - nodeId: "ns=2;i=9"
           name: "Pump Flow"
           dataType: "FLOAT"
           pollingRate: 1000
           enabled: true
           unit: "l/min"
 
-        - nodeId: "ns=2;i=10"          # Mode
+        - nodeId: "ns=2;i=10"
           name: "Pump Mode"
           dataType: "INT"
           pollingRate: 2000
           enabled: true
 
-        - nodeId: "ns=2;i=12"          # Level
+        - nodeId: "ns=2;i=12"
           name: "Tank Level"
           dataType: "FLOAT"
           pollingRate: 1000
           enabled: true
           unit: "%"
 
-        - nodeId: "ns=2;i=13"          # InletValve
+        - nodeId: "ns=2;i=13"
           name: "Inlet Valve"
           dataType: "BOOLEAN"
           pollingRate: 2000
           enabled: true
 
-        - nodeId: "ns=2;i=14"          # OutletValve
+        - nodeId: "ns=2;i=14"
           name: "Outlet Valve"
           dataType: "BOOLEAN"
           pollingRate: 2000

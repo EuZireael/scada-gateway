@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /home/zireael/Zireael/Projects/SCADA/plc-simulator/venv312
+set -gx VIRTUAL_ENV /home/zireael/Zireael/Projects/repository/scada-gateway/plc-simulator/venv312
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH
