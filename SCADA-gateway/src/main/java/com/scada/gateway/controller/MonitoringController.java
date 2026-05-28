@@ -25,18 +25,6 @@ public class MonitoringController {
         return response;
     }
 
-    /**
-     * Получить статус системы
-     */
-    @GetMapping("/status")
-    public Map<String, Object> status() {
-        Map<String, Object> response = new HashMap<>();
-        response.put("status", "RUNNING");
-        response.put("timestamp", System.currentTimeMillis());
-        response.put("service", "SCADA Gateway");
-        return response;
-    }
-
     // ==================== ЖУРНАЛ СОБЫТИЙ ====================
 
     /**
@@ -121,6 +109,7 @@ public class MonitoringController {
         stats.put("errors", errors);
         stats.put("warnings", warnings);
         stats.put("unacknowledged_alarms", unacknowledgedAlarms);
+        stats.put("timestamp", System.currentTimeMillis());
         
         return stats;
     }
