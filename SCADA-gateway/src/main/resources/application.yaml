@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=
+
+spring:
+  application:
+    name: scada-gateway
+  
+  datasource:
+    url: jdbc:postgresql://localhost:5432/scada_db
+    username: scada_user
+    password: scada_password
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.type.mapping: 
+          telemetry: com.scada.gateway.kafka.dto.TelemetryMessage,
+          alarm: com.scada.gateway.kafka.dto.AlarmMessage,
+          event: com.scada.gateway.kafka.dto.EventMessage
+        retries: 3
+        acks: all
+        compression-type: snappy
+        batch-size: 16384
+        linger.ms: 5
+    consumer:
+      group-id: scada-gateway-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.scada.gateway.kafka.dto
+  
+  docker:
+    compose:
+      enabled: false
+
+modbus:
+  host: 127.0.0.1
+  port: 5020
+  enabled: true
+
+kafka:
+  enabled: false
+  topics:
+    telemetry: scada-telemetry
+    alarms: scada-alarms
+    events: scada-events
+
+opcua:
+  servers:
+    - id: plc-simulator-001
+      name: "Siemens S7-1200 Simulator"
+      endpoint: "opc.tcp://127.0.0.1:4840"
+      security: "NONE"
+      enabled: true
+
+logging:
+  level:
+    com.scada.gateway: DEBUG
+    org.eclipse.milo: INFO
+    org.springframework.kafka: ERROR
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
