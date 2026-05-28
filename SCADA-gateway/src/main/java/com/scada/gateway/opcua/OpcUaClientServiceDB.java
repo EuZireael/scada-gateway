@@ -3,11 +3,16 @@ package com.scada.gateway.opcua;
 import com.scada.gateway.model.entity.ControllerEntity;
 import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.model.entity.TelemetryEntity;
-import com.scada.gateway.model.TagValue;
 import com.scada.gateway.service.ConfigurationService;
 import com.scada.gateway.repository.TelemetryRepository;
+import com.scada.gateway.kafka.producer.TelemetryProducer;
+import com.scada.gateway.modbus.ModbusClientService;
+import com.scada.gateway.service.EventLogService;
+
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import jakarta.transaction.Transactional;
+
 import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
 import org.eclipse.milo.opcua.sdk.client.api.config.OpcUaClientConfig;
 import org.eclipse.milo.opcua.stack.client.DiscoveryClient;
@@ -15,21 +20,15 @@ import org.eclipse.milo.opcua.stack.core.types.builtin.*;
 import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.UInteger;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
 import org.eclipse.milo.opcua.stack.core.types.structured.EndpointDescription;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.*;
 
-/**
- * OPC UA клиент, работающий с конфигурацией из БД (без Lombok).
- */
 @Service
 public class OpcUaClientServiceDB {
 
@@ -37,53 +36,80 @@ public class OpcUaClientServiceDB {
 
     private final ConfigurationService configurationService;
     private final TelemetryRepository telemetryRepository;
+    private final TelemetryProducer telemetryProducer;
+    private final ModbusClientService modbusClientService;
+    private final EventLogService eventLogService;
 
-    private OpcUaClient client;
-    private ExecutorService executorService;
-    private volatile boolean running = false;
-    private Map<Long, TagEntity> tagCache = new ConcurrentHashMap<>();
+    private final Map<Long, OpcUaClient> opcClients = new ConcurrentHashMap<>();
+    private final Map<Long, ExecutorService> executors = new ConcurrentHashMap<>();
+    private final Map<Long, Boolean> runningStatus = new ConcurrentHashMap<>();
 
-    // Явный конструктор
+    private final Map<Long, TagEntity> tagCache = new ConcurrentHashMap<>();
+
     public OpcUaClientServiceDB(ConfigurationService configurationService,
-                                TelemetryRepository telemetryRepository) {
+                                TelemetryRepository telemetryRepository,
+                                TelemetryProducer telemetryProducer,
+                                ModbusClientService modbusClientService,
+                                EventLogService eventLogService) {
         this.configurationService = configurationService;
         this.telemetryRepository = telemetryRepository;
+        this.telemetryProducer = telemetryProducer;
+        this.modbusClientService = modbusClientService;
+        this.eventLogService = eventLogService;
     }
 
     @PostConstruct
     public void init() {
-        log.info("Initializing OPC UA Client Service with Database configuration");
-        this.executorService = Executors.newSingleThreadExecutor();
+        log.info("Initializing Unified Protocol Client Service");
+        eventLogService.logSystem("INFO", "SCADA Gateway starting up", Map.of("component", "OpcUaClientService"));
 
-        // Загружаем конфигурацию из БД
         loadConfiguration();
 
-        // Подключаемся к первому активному контроллеру
         List<ControllerEntity> controllers = configurationService.getAllControllers();
-        if (!controllers.isEmpty()) {
-            connectToServer(controllers.get(0));
-        } else {
-            log.warn("No active controllers found in database");
+
+        for (ControllerEntity controller : controllers) {
+            if (controller.isEnabled()) {
+                connectToController(controller);
+            }
         }
     }
 
     private void loadConfiguration() {
         var tags = configurationService.getAllActiveTags();
         tags.forEach(tag -> tagCache.put(tag.getId(), tag));
-        log.info("Loaded {} tags from database", tagCache.size());
+        log.info("Loaded {} tags", tagCache.size());
+        eventLogService.logSystem("INFO", "Configuration loaded", Map.of("tags", tagCache.size(), "controllers", configurationService.getAllControllers().size()));
     }
 
-    private void connectToServer(ControllerEntity controller) {
+    private void connectToController(ControllerEntity controller) {
+        String endpoint = controller.getEndpoint();
+        
+        if (endpoint != null && endpoint.toLowerCase().contains("modbus")) {
+            log.info("📡 Modbus controller: {} at {}", controller.getName(), endpoint);
+            startPollingForController(controller);
+        } else if (endpoint != null && endpoint.toLowerCase().contains("opc.tcp")) {
+            connectOpcUaController(controller);
+        } else {
+            log.warn("Unknown protocol for controller: {}", controller.getName());
+            eventLogService.logSystem("WARNING", "Unknown protocol for controller: " + controller.getName(), Map.of("controller", controller.getName(), "endpoint", endpoint));
+        }
+    }
+
+    private void connectOpcUaController(ControllerEntity controller) {
         try {
-            log.info("Connecting to OPC UA server: {} at {}",
-                    controller.getName(), controller.getEndpoint());
+            log.info("🔌 Connecting OPC UA: {} at {}", controller.getName(), controller.getEndpoint());
+            eventLogService.logConnection(controller, "CONNECTING", null);
 
-            List<EndpointDescription> endpoints = DiscoveryClient.getEndpoints(
-                    controller.getEndpoint()).get();
+            List<EndpointDescription> endpoints =
+                    DiscoveryClient.getEndpoints(controller.getEndpoint()).get();
 
-            EndpointDescription endpoint = endpoints.stream()
-                    .findFirst()
-                    .orElseThrow(() -> new RuntimeException("No endpoints found"));
+            if (endpoints.isEmpty()) {
+                log.error("No endpoints found for {}", controller.getEndpoint());
+                eventLogService.logConnection(controller, "ERROR", "No endpoints found");
+                return;
+            }
+
+            EndpointDescription endpoint = endpoints.get(0);
 
             OpcUaClientConfig config = OpcUaClientConfig.builder()
                     .setApplicationName(LocalizedText.english("SCADA Gateway"))
@@ -91,147 +117,265 @@ public class OpcUaClientServiceDB {
                     .setEndpoint(endpoint)
                     .build();
 
-            client = OpcUaClient.create(config);
+            OpcUaClient client = OpcUaClient.create(config);
             client.connect().get();
 
-            log.info("✅ Connected to OPC UA server: {}", controller.getName());
+            opcClients.put(controller.getId(), client);
+            runningStatus.put(controller.getId(), true);
 
-            running = true;
-            startPolling(controller);
+            startPollingForController(controller);
+
+            log.info("✅ OPC UA connected: {}", controller.getName());
+            eventLogService.logConnection(controller, "CONNECTED", null);
 
         } catch (Exception e) {
-            log.error("Failed to connect to OPC UA server: {}", e.getMessage());
+            log.error("❌ OPC UA connection failed for {}: {}", controller.getName(), e.getMessage());
+            eventLogService.logConnection(controller, "ERROR", e.getMessage());
+            eventLogService.logError("OpcUaClient", "Failed to connect to " + controller.getName(), e, null, controller);
         }
     }
 
-    private void startPolling(ControllerEntity controller) {
-        executorService.submit(() -> {
-            while (running) {
+    private void startPollingForController(ControllerEntity controller) {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        executors.put(controller.getId(), executor);
+        runningStatus.put(controller.getId(), true);
+
+        String endpoint = controller.getEndpoint();
+        boolean isModbus = endpoint != null && endpoint.toLowerCase().contains("modbus");
+
+        if (isModbus) {
+            startModbusPolling(controller, executor);
+        } else {
+            startOpcuaPolling(controller, executor);
+        }
+    }
+
+    private void startOpcuaPolling(ControllerEntity controller, ExecutorService executor) {
+        executor.submit(() -> {
+            OpcUaClient client = opcClients.get(controller.getId());
+            
+            while (runningStatus.getOrDefault(controller.getId(), false)) {
                 try {
                     List<TagEntity> tags = configurationService.getTagsForController(controller.getId());
 
                     for (TagEntity tag : tags) {
-                        if (!tag.isEnabled()) continue;
+                        if (!tag.isEnabled() || !isOpcUaTag(tag)) continue;
 
-                        readTag(controller, tag);
+                        try {
+                            NodeId nodeId = NodeId.parse(tag.getNodeId());
+                            DataValue dataValue = client.readValue(0, TimestampsToReturn.Both, nodeId).get();
+                            Object val = extractValue(dataValue.getValue());
+                            String quality = dataValue.getStatusCode().isGood() ? "GOOD" : "BAD";
+                            
+                            processTagValue(tag, val, quality);
+                            
+                        } catch (Exception e) {
+                            log.error("OPC UA read error for tag {}: {}", tag.getName(), e.getMessage());
+                            eventLogService.logError("OpcUaClient", "Failed to read tag " + tag.getName(), e, tag, controller);
+                            processTagValue(tag, null, "BAD");
+                        }
+
                         Thread.sleep(tag.getPollingRate());
                     }
+
                 } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+                    log.info("Polling interrupted for {}", controller.getName());
                     break;
                 } catch (Exception e) {
-                    log.error("Error in polling loop: {}", e.getMessage());
+                    log.error("Polling error for {}: {}", controller.getName(), e.getMessage());
+                    eventLogService.logError("OpcUaClient", "Polling error for " + controller.getName(), e, null, controller);
                 }
             }
         });
     }
 
-    private void readTag(ControllerEntity controller, TagEntity tag) {
-        try {
-            NodeId nodeId = NodeId.parse(tag.getNodeId());
+    private void startModbusPolling(ControllerEntity controller, ExecutorService executor) {
+        String host = extractModbusHost(controller.getEndpoint());
+        int port = extractModbusPort(controller.getEndpoint(), 502);
 
-            DataValue dataValue = client.readValue(0, TimestampsToReturn.Both, nodeId).get();
+        eventLogService.logConnection(controller, "CONNECTING", "Modbus endpoint: " + controller.getEndpoint());
 
-            if (dataValue.getStatusCode().isGood()) {
-                Object value = extractValue(dataValue.getValue());
+        executor.submit(() -> {
+            while (runningStatus.getOrDefault(controller.getId(), false)) {
+                try {
+                    List<TagEntity> tags = configurationService.getTagsForController(controller.getId());
 
-                // Сохраняем последнее значение в кэш
-                tag.setLastValue(value);
-                tag.setLastReadTime(Instant.now());
+                    for (TagEntity tag : tags) {
+                        if (!tag.isEnabled() || !isModbusTag(tag)) continue;
 
-                // Сохраняем в БД телеметрии
-                saveTelemetry(tag, value, "GOOD");
+                        try {
+                            Object value = null;
+                            
+                            if ("FLOAT".equalsIgnoreCase(tag.getDataType())) {
+                                value = modbusClientService.readFloat(
+                                    host, port, 
+                                    tag.getModbusAddress(), 
+                                    tag.getModbusUnitId()
+                                );
+                            } else if ("INT".equalsIgnoreCase(tag.getDataType()) || "INT16".equalsIgnoreCase(tag.getDataType())) {
+                                value = modbusClientService.readInt16(
+                                    host, port,
+                                    tag.getModbusAddress(),
+                                    tag.getModbusUnitId()
+                                );
+                            } else if ("BOOLEAN".equalsIgnoreCase(tag.getDataType())) {
+                                Integer intVal = modbusClientService.readInt16(
+                                    host, port,
+                                    tag.getModbusAddress(),
+                                    tag.getModbusUnitId()
+                                );
+                                value = intVal != null && intVal != 0;
+                            }
 
-                // Создаем TagValue для логирования
-                TagValue tagValue = new TagValue(
-                        controller.getId().toString(),
-                        tag.getNodeId(),
-                        tag.getName(),
-                        value,
-                        tag.getDataType(),
-                        "GOOD",
-                        Instant.now(),
-                        tag.getUnit()
-                );
+                            String quality = value != null ? "GOOD" : "BAD";
+                            processTagValue(tag, value, quality);
 
-                log.info("📊 {} = {} {}",
-                        tag.getName(),
-                        value,
-                        tag.getUnit() != null ? tag.getUnit() : "");
+                        } catch (Exception e) {
+                            log.error("Modbus read error for tag {}: {}", tag.getName(), e.getMessage());
+                            eventLogService.logError("ModbusClient", "Failed to read tag " + tag.getName(), e, tag, controller);
+                            processTagValue(tag, null, "BAD");
+                        }
 
-            } else {
-                log.warn("Bad status for {}: {}", tag.getNodeId(), dataValue.getStatusCode());
-                saveTelemetry(tag, null, "BAD");
+                        Thread.sleep(tag.getPollingRate());
+                    }
+
+                } catch (InterruptedException e) {
+                    log.info("Modbus polling interrupted for {}", controller.getName());
+                    break;
+                } catch (Exception e) {
+                    log.error("Modbus polling error for {}: {}", controller.getName(), e.getMessage());
+                    eventLogService.logError("ModbusClient", "Polling error for " + controller.getName(), e, null, controller);
+                }
             }
+        });
+    }
 
-        } catch (Exception e) {
-            log.error("Error reading tag {}: {}", tag.getNodeId(), e.getMessage());
+    private boolean isOpcUaTag(TagEntity tag) {
+        return "OPCUA".equalsIgnoreCase(tag.getProtocol()) || 
+               (tag.getNodeId() != null && !tag.getNodeId().isEmpty());
+    }
+
+    private boolean isModbusTag(TagEntity tag) {
+        return "MODBUS".equalsIgnoreCase(tag.getProtocol()) || 
+               (tag.getModbusAddress() != null && tag.getModbusAddress() > 0);
+    }
+
+    @Transactional
+    private void processTagValue(TagEntity tag, Object value, String quality) {
+        // Логируем чтение тега
+        eventLogService.logTagRead(tag, value != null ? value : "NULL", quality);
+        
+        // Проверка на алармы (если есть min/max)
+        if (value instanceof Number) {
+            double numValue = ((Number) value).doubleValue();
+            if (tag.getMinValue() != null && numValue < tag.getMinValue()) {
+                eventLogService.logAlarm(tag, "WARNING", 
+                    String.format("Low value: %.2f < %.2f %s", numValue, tag.getMinValue(), 
+                        tag.getUnit() != null ? tag.getUnit() : ""),
+                    tag.getMinValue(), numValue);
+            }
+            if (tag.getMaxValue() != null && numValue > tag.getMaxValue()) {
+                eventLogService.logAlarm(tag, "WARNING",
+                    String.format("High value: %.2f > %.2f %s", numValue, tag.getMaxValue(),
+                        tag.getUnit() != null ? tag.getUnit() : ""),
+                    tag.getMaxValue(), numValue);
+            }
+        }
+        
+        saveTelemetry(tag, value, quality);
+
+        if (value != null) {
+            telemetryProducer.sendTelemetry(tag, value, quality);
+            log.info("📊 {} = {}", tag.getName(), value);
+        } else {
+            log.warn("⚠️ {} = NULL (quality: {})", tag.getName(), quality);
         }
     }
 
     private void saveTelemetry(TagEntity tag, Object value, String quality) {
         try {
-            TelemetryEntity telemetry = new TelemetryEntity();
-            telemetry.setTagId(tag.getId());
-            telemetry.setTime(Instant.now());
-            telemetry.setQuality(quality);
+            TelemetryEntity t = new TelemetryEntity();
+            t.setTagId(tag.getId());
+            t.setTime(Instant.now());
+            t.setQuality(quality);
 
             if (value instanceof Number) {
-                telemetry.setValue(((Number) value).doubleValue());
+                t.setValue(((Number) value).doubleValue());
             } else if (value instanceof Boolean) {
-                telemetry.setValueString(value.toString());
+                t.setValue(((Boolean) value) ? 1.0 : 0.0);
             } else if (value != null) {
-                telemetry.setValueString(value.toString());
+                t.setValueString(value.toString());
             }
 
-            telemetryRepository.save(telemetry);
-
+            telemetryRepository.save(t);
         } catch (Exception e) {
-            log.error("Failed to save telemetry for tag {}: {}", tag.getName(), e.getMessage());
+            log.error("DB save error: {}", e.getMessage());
+            eventLogService.logError("Database", "Failed to save telemetry for tag " + tag.getName(), e, tag, null);
         }
     }
 
     private Object extractValue(Variant variant) {
-        if (variant == null || variant.isNull()) {
-            return null;
+        if (variant == null || variant.isNull()) return null;
+
+        Object v = variant.getValue();
+
+        if (v instanceof UInteger) {
+            return ((UInteger) v).longValue();
         }
 
-        Object value = variant.getValue();
-        if (value instanceof UInteger) {
-            return ((UInteger) value).longValue();
+        return v;
+    }
+
+    private String extractModbusHost(String endpoint) {
+        try {
+            String s = endpoint.replace("modbus://", "");
+            if (s.contains(":")) {
+                return s.split(":")[0];
+            }
+            return s;
+        } catch (Exception e) {
+            return "127.0.0.1";
         }
-        return value;
+    }
+
+    private int extractModbusPort(String endpoint, int defaultPort) {
+        try {
+            String s = endpoint.replace("modbus://", "");
+            String[] parts = s.split(":");
+            if (parts.length > 1) {
+                return Integer.parseInt(parts[1]);
+            }
+            return defaultPort;
+        } catch (Exception e) {
+            return defaultPort;
+        }
     }
 
     @PreDestroy
     public void shutdown() {
-        log.info("Shutting down OPC UA client...");
-        running = false;
+        log.info("Shutting down all connections...");
+        eventLogService.logSystem("INFO", "SCADA Gateway shutting down", Map.of("component", "OpcUaClientService"));
 
-        if (executorService != null) {
-            executorService.shutdown();
-            try {
-                executorService.awaitTermination(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+        for (Long id : runningStatus.keySet()) {
+            runningStatus.put(id, false);
+        }
+
+        for (ExecutorService executor : executors.values()) {
+            if (executor != null) {
+                executor.shutdown();
             }
         }
 
-        if (client != null) {
-            try {
-                client.disconnect().get();
-                log.info("Disconnected from OPC UA server");
-            } catch (Exception e) {
-                log.error("Error disconnecting: {}", e.getMessage());
+        for (Map.Entry<Long, OpcUaClient> entry : opcClients.entrySet()) {
+            if (entry.getValue() != null) {
+                try {
+                    entry.getValue().disconnect().get();
+                    log.info("Disconnected OPC UA client for controller {}", entry.getKey());
+                } catch (Exception ignored) {}
             }
         }
-    }
 
-    public Map<Long, TagEntity> getLastValues() {
-        return tagCache;
-    }
-
-    public boolean isConnected() {
-        return client != null && running;
+        modbusClientService.disconnectAll();
+        log.info("Shutdown complete");
     }
 }

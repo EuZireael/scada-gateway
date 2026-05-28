@@ -1,8 +1,6 @@
-#!/home/zireael/Zireael/Projects/SCADA/plc-simulator/venv312/bin/python3.12
-# -*- coding: utf-8 -*-
-import re
+#!/home/zireael/Zireael/Projects/repository/scada-gateway/plc-simulator/venv312/bin/python3.12
 import sys
 from asyncua.tools import uahistoryread
 if __name__ == '__main__':
-    sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
     sys.exit(uahistoryread())

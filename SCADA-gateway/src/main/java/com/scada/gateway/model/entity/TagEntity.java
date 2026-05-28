@@ -49,6 +49,22 @@ public class TagEntity {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
     
+    // ========== НОВЫЕ ПОЛЯ ДЛЯ MODBUS ==========
+    
+    @Column(name = "protocol", nullable = false)
+    private String protocol = "opcua";  // "opcua" или "modbus"
+    
+    @Column(name = "modbus_address")
+    private Integer modbusAddress;
+    
+    @Column(name = "modbus_type")
+    private String modbusType;  // "float32", "int16", "int32"
+    
+    @Column(name = "modbus_unit_id")
+    private Integer modbusUnitId = 1;  // Slave ID, по умолчанию 1
+    
+    // ==========================================
+    
     @Transient
     private Object lastValue;
     
@@ -69,7 +85,8 @@ public class TagEntity {
         updatedAt = LocalDateTime.now();
     }
     
-    // Геттеры и сеттеры
+    // ========== Геттеры и сеттеры ==========
+    
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     
@@ -109,9 +126,35 @@ public class TagEntity {
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
     
+    // ========== Новые геттеры и сеттеры ==========
+    
+    public String getProtocol() { return protocol; }
+    public void setProtocol(String protocol) { this.protocol = protocol; }
+    
+    public Integer getModbusAddress() { return modbusAddress; }
+    public void setModbusAddress(Integer modbusAddress) { this.modbusAddress = modbusAddress; }
+    
+    public String getModbusType() { return modbusType; }
+    public void setModbusType(String modbusType) { this.modbusType = modbusType; }
+    
+    public Integer getModbusUnitId() { return modbusUnitId; }
+    public void setModbusUnitId(Integer modbusUnitId) { this.modbusUnitId = modbusUnitId; }
+    
+    // ==========================================
+    
     public Object getLastValue() { return lastValue; }
     public void setLastValue(Object lastValue) { this.lastValue = lastValue; }
     
     public Instant getLastReadTime() { return lastReadTime; }
     public void setLastReadTime(Instant lastReadTime) { this.lastReadTime = lastReadTime; }
+    
+    // ========== Вспомогательные методы ==========
+    
+    public boolean isModbus() {
+        return "modbus".equalsIgnoreCase(protocol);
+    }
+    
+    public boolean isOpcUa() {
+        return "opcua".equalsIgnoreCase(protocol);
+    }
 }
