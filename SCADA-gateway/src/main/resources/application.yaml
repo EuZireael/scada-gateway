@@ -45,6 +45,8 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: com.scada.gateway.kafka.dto
+    admin:
+      auto-create: false
   
   docker:
     compose:
@@ -56,7 +58,7 @@ modbus:
   enabled: true
 
 kafka:
-  enabled: false
+  enabled: true
   topics:
     telemetry: scada-telemetry
     alarms: scada-alarms
@@ -64,17 +66,74 @@ kafka:
 
 opcua:
   servers:
-    - id: plc-simulator-001
-      name: "Siemens S7-1200 Simulator"
+    - id: phoenix-contact-001
+      name: "Phoenix Contact PLC"
       endpoint: "opc.tcp://127.0.0.1:4840"
       security: "NONE"
       enabled: true
+      tags:
+        - name: "Motor Speed"
+          nodeId: "ns=2;s=DB1.Speed"
+          dataType: "FLOAT"
+          pollingRate: 1000
+          enabled: true
+          unit: "rpm"
+        - name: "Motor Current"
+          nodeId: "ns=2;s=DB1.Current"
+          dataType: "FLOAT"
+          pollingRate: 1000
+          enabled: true
+          unit: "A"
+        - name: "Motor Temperature"
+          nodeId: "ns=2;s=DB1.Temperature"
+          dataType: "FLOAT"
+          pollingRate: 1000
+          enabled: true
+          unit: "°C"
+        - name: "Motor Running"
+          nodeId: "ns=2;s=DB1.Running"
+          dataType: "BOOLEAN"
+          pollingRate: 1000
+          enabled: true
+        - name: "Pump Pressure"
+          nodeId: "ns=2;s=DB2.Pressure"
+          dataType: "FLOAT"
+          pollingRate: 1000
+          enabled: true
+          unit: "bar"
+        - name: "Pump Flow"
+          nodeId: "ns=2;s=DB2.Flow"
+          dataType: "FLOAT"
+          pollingRate: 1000
+          enabled: true
+          unit: "m³/h"
+        - name: "Pump Mode"
+          nodeId: "ns=2;s=DB2.Mode"
+          dataType: "INT"
+          pollingRate: 1000
+          enabled: true
+        - name: "Tank Level"
+          nodeId: "ns=2;s=DB3.Level"
+          dataType: "FLOAT"
+          pollingRate: 1000
+          enabled: true
+          unit: "%"
+        - name: "Inlet Valve"
+          nodeId: "ns=2;s=DB3.InletValve"
+          dataType: "BOOLEAN"
+          pollingRate: 1000
+          enabled: true
+        - name: "Outlet Valve"
+          nodeId: "ns=2;s=DB3.OutletValve"
+          dataType: "BOOLEAN"
+          pollingRate: 1000
+          enabled: true
 
 logging:
   level:
     com.scada.gateway: DEBUG
     org.eclipse.milo: INFO
-    org.springframework.kafka: ERROR
+    org.springframework.kafka: INFO
 
 management:
   endpoints:
