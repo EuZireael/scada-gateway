@@ -1,0 +1,63 @@
+name: scada-infra
+
+# Инфраструктура для гибридного запуска: PostgreSQL + Kafka(+Zookeeper)
+# поднимаются в Docker, а симулятор (Python) и шлюз (Java) запускаются
+# на хосте вручную. Все порты опубликованы на localhost.
+#   docker compose up -d
+#   docker compose ps
+#   docker compose down            # остановить (данные сохранятся в volume)
+#   docker compose down -v         # остановить и стереть данные БД
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: scada-postgres
+    environment:
+      POSTGRES_DB: scada_db
+      POSTGRES_USER: scada_user
+      POSTGRES_PASSWORD: scada_password
+    ports:
+      - "5433:5432"            # хост 5433 -> совпадает с application.yaml
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scada_user -d scada_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - scada-network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - scada-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+    networks:
+      - scada-network
+
+volumes:
+  pgdata:
+
+networks:
+  scada-network:
+    driver: bridge

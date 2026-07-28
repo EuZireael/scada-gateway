@@ -1,0 +1,33 @@
+# ---- Java / Maven ----
+SCADA-gateway/target/
+*.class
+
+# ---- Python (venv и кэши) ----
+plc-simulator/venv/
+plc-simulator/venv312/
+plc-simulator/venv-sim312/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# ---- Офлайн-пакеты доставки (гигабайтные docker-образы — НЕ для GitHub) ----
+deliver/images/
+scada-deliver/
+*.tar
+*.tar.gz
+*.zip
+
+# ---- Логи и временное ----
+*.log
+logs/
+*.tmp
+*.bak
+
+# ---- IDE / OS ----
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# ---- Локальные настройки инструментов ----
+.claude/

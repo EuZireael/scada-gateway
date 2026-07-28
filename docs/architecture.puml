@@ -1,0 +1,190 @@
+@startuml SCADA-Gateway-Architecture
+' ============================================================================
+'  SCADA Gateway — место проекта в общей архитектуре продукта.
+'  Текстовое UML-описание (дополняет Архитектура_SCADA_расширенная.drawio).
+'  Рендер: PlantUML (plantuml architecture.puml) или любой online-viewer.
+' ============================================================================
+title Архитектура SCADA: шлюз (Gateway) в контуре продукта
+
+skinparam backgroundColor #FDFDFD
+skinparam shadowing false
+skinparam roundcorner 12
+skinparam defaultFontName "Segoe UI"
+skinparam ArrowColor #37474F
+skinparam ArrowFontColor #546E7A
+skinparam rectangle {
+  BorderColor #90A4AE
+  FontColor  #263238
+}
+skinparam component {
+  BorderColor #5C6BC0
+  BackgroundColor #E8EAF6
+  FontColor #1A237E
+}
+skinparam database {
+  BorderColor #00897B
+  BackgroundColor #E0F2F1
+}
+skinparam queue {
+  BorderColor #F9A825
+  BackgroundColor #FFF8E1
+}
+
+' --------------------------- ПОЛЕВОЙ УРОВЕНЬ -------------------------------
+rectangle "Полевой уровень\n(контроллеры ПЛК)" as FIELD #F1F8E9 {
+  component "Phoenix Contact\nOPC UA сервер :4840\nтипы V, VC, M, LS, FS, GS,\nDI, DO, HA, HL, SB" as PLC_OPC
+  component "WAGO\nModbus TCP :5020\nQT, PT, TE, LT, AI, AO,\nFQT, WT, объекты/рецепты" as PLC_MB
+  note bottom of PLC_OPC
+    В стенде обоих контроллеров играет
+    **PLC-симулятор** (plc.py): проигрывает
+    архив BN1_MCA1 (170 серий, 5 сут, real-time
+    loop) в РОДНОМ формате протоколов.
+    Формат-ориентир — прошивка ptusa_main.
+  end note
+}
+
+' ------------------------------- ШЛЮЗ (МОЙ ПРОЕКТ) -------------------------
+rectangle "**SCADA Gateway**  (Spring Boot 3.2.4 / Java 21)   ←  этот проект" as GW #E8EAF6 {
+  component "OPC UA Client\n(Eclipse Milo)\nтипизированное чтение" as C_OPC
+  component "Modbus Client\n(j2mod)\nfloat32 LE / int16" as C_MB
+  component "Connection Supervisor\n@Scheduled 10s\nавто-reconnect, stale>30s,\nтокен поколения (anti-flap)" as SUP
+  component "Alarm Engine\nedge-триггер по уставкам\np1/p99 архива, deadband" as ALM
+  component "Event / Journal\nevent_log + смена качества" as EVT
+  component "Configuration Service\nupsert тегов из application.yaml\n(tagId = node.id)" as CFG
+  component "Kafka Producers\nTelemetry / Alarm / Event\n+ Command consumer" as PROD
+}
+
+' ------------------------------- ШИНА -------------------------------------
+queue "**Apache Kafka**\nscada-telemetry\nscada-alarms\nscada-events\nscada-commands\nscada-command-results" as KAFKA
+
+' ------------------------------ БАЗА КАНАЛОВ -------------------------------
+database "**База каналов**\nchannel_dump.sql (EAV)\nnode / param / template\n3449 узлов · 2471 канал · 17542 param" as CHDB
+
+' ------------------------------ ПОТРЕБИТЕЛИ --------------------------------
+rectangle "Верхний уровень (SCADA HMI)" as TOP #FFF3E0 {
+  component "Редактор проекта\nкарты, состояния, шаблоны,\nсвязь свойств с каналами, скрипты" as EDIT
+  component "Монитор (runtime)\nruntime-модель, скрипты,\nактуальные теги и состояния" as MON
+  component "Мобильное приложение\nклиент / сервер / админ-панель\n(scada.mobile.*)" as MOB
+}
+
+' ------------------------------- СВЯЗИ ------------------------------------
+PLC_OPC -down-> C_OPC : "OPC UA\nтипизированные узлы"
+PLC_MB  -down-> C_MB  : "Modbus TCP\nholding-регистры"
+
+C_OPC --> CFG
+C_MB  --> CFG
+CFG ..> CHDB : "адреса/параметры\nопроса каналов"
+C_OPC --> ALM
+C_MB  --> ALM
+C_OPC --> EVT
+SUP ..> C_OPC : "переподнять сессию"
+SUP ..> C_MB  : "лениво само-лечится"
+
+CFG  --> PROD : "значения тегов"
+ALM  --> PROD : "алармы"
+EVT  --> PROD : "события / журнал"
+
+PROD --> KAFKA : "**Значения тегов**\n(tagId=node.id,\nmetadata{device,field,type})"
+KAFKA --> PROD : "команды записи\n(scada-commands)"
+
+KAFKA --> MON  : "телеметрия / алармы / события"
+KAFKA --> MOB  : "scada.mobile.*"
+MON  ..> CHDB  : "резолвит канал\nпо node.id / пути"
+EDIT ..> CHDB  : "**Адреса каналов**\nсоздаёт/связывает"
+MON  --> KAFKA : "команды оператора"
+
+@enduml
+
+@startuml SCADA-Gateway-Dataflow
+' ============================================================================
+'  Поток данных: контроллер → шлюз → Kafka → монитор (+ авто-reconnect, алармы)
+' ============================================================================
+title Поток данных и обработка в шлюзе
+
+skinparam shadowing false
+skinparam defaultFontName "Segoe UI"
+skinparam sequence {
+  ArrowColor #37474F
+  LifeLineBorderColor #90A4AE
+  ParticipantBorderColor #5C6BC0
+  ParticipantBackgroundColor #E8EAF6
+}
+
+actor "Оператор" as OP
+participant "Контроллер\n(симулятор)" as PLC
+participant "Gateway\nOPC UA / Modbus" as GW
+database "channel_dump.sql" as DB
+queue "Kafka" as K
+participant "Монитор" as MON
+
+== Инициализация ==
+GW -> DB : upsert 2471 тега из application.yaml (tagId=node.id)
+GW -> PLC : connect OPC UA :4840 + Modbus :5020
+GW -> K   : event CONNECTED (scada-events)
+
+== Опрос (цикл) ==
+loop каждый poll-цикл (родное поколение потока)
+  GW -> PLC : read value (typed / holding-регистры)
+  PLC --> GW : value + quality
+  GW -> GW  : Alarm Engine (edge-триггер по p1/p99)
+  GW -> K   : TELEMETRY {tagId, value, metadata{device,field,type}} → scada-telemetry
+  opt значение вне уставки
+    GW -> K : ALARM {severity, threshold, cleared} → scada-alarms
+  end
+end
+K -> MON : телеметрия/алармы
+MON -> DB : резолв канала по node.id → сборка объекта-прибора
+
+== Обрыв связи и авто-восстановление ==
+PLC -> PLC : контроллер недоступен
+GW -> GW   : Supervisor: нет удачных чтений > 30 c
+GW -> K    : event DISCONNECTED (WARNING)
+loop раз в 10 c (тихо)
+  GW -> PLC : reconnect (новое поколение опроса)
+end
+PLC --> GW : связь есть
+GW -> K    : event «связь восстановлена» (INFO)
+
+== Команда оператора ==
+OP -> MON : записать значение
+MON -> K  : command → scada-commands
+K -> GW   : команда записи
+GW -> PLC : OPC UA write
+GW -> K   : результат → scada-command-results
+@enduml
+
+@startuml SCADA-Gateway-Deployment
+' ============================================================================
+'  Развёртывание: docker-compose (одна команда ./up.sh)
+' ============================================================================
+title Развёртывание — docker compose (./up.sh)
+
+skinparam shadowing false
+skinparam defaultFontName "Segoe UI"
+skinparam node {
+  BorderColor #5C6BC0
+  BackgroundColor #E8EAF6
+}
+skinparam database {
+  BorderColor #00897B
+  BackgroundColor #E0F2F1
+}
+skinparam queue {
+  BorderColor #F9A825
+  BackgroundColor #FFF8E1
+}
+
+node "Хост (Fedora, podman)" as HOST {
+  node "scada-simulator\npython:3.11\n:4840 :5020" as N_SIM
+  node "scada-gateway\ntemurin-21-jre\n:8888" as N_GW
+  queue "scada-kafka\napache/kafka KRaft\nвнутри kafka:9092\nхост localhost:9094" as N_K
+  database "scada-postgres\npostgres:16\nlocalhost:5433" as N_PG
+}
+node "Монитор / клиент\n(снаружи)" as N_MON
+
+N_SIM --> N_GW  : OPC UA + Modbus\n(SIM_HOST=simulator)
+N_GW  --> N_K   : kafka:9092
+N_GW  --> N_PG  : jdbc postgres:5432
+N_GW  --> N_MON : (через Kafka)
+N_MON --> N_K   : localhost:9094
+@enduml
