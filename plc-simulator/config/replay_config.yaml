@@ -15,11 +15,11 @@ plc:
   - db_number: 1
     name: BN1_MCA1
     tags:
-    - {name: "385", address: "385", replay_source: 2A010000, type: bool, protocol: opcua, device: "LINE1V0", field: "ST", dev_type: "V", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "385", address: "385", replay_source: 2A010000, type: bool, protocol: opcua, device: "LINE1V0", field: "ST", dev_type: "V", access: RW, noise_enabled: false, drift_enabled: false}
     - {name: "460", address: "460", replay_source: 2A630000, type: float, protocol: opcua, device: "LINE1V0", field: "M", dev_type: "V", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "387", address: "387", replay_source: 2A010001, type: bool, protocol: opcua, device: "LINE1V1", field: "ST", dev_type: "V", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "462", address: "462", replay_source: 2A630001, type: float, protocol: opcua, device: "LINE1V1", field: "M", dev_type: "V", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
-    - {name: "389", address: "389", replay_source: 2A010002, type: bool, protocol: opcua, device: "LINE1V10", field: "ST", dev_type: "V", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "389", address: "389", replay_source: 2A010002, type: bool, protocol: opcua, device: "LINE1V10", field: "ST", dev_type: "V", access: RW, noise_enabled: false, drift_enabled: false}
     - {name: "464", address: "464", replay_source: 2A630002, type: float, protocol: opcua, device: "LINE1V10", field: "M", dev_type: "V", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "391", address: "391", replay_source: 2A010003, type: bool, protocol: opcua, device: "LINE1V11", field: "ST", dev_type: "V", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "466", address: "466", replay_source: 2A750006, type: float, protocol: opcua, device: "LINE1V11", field: "M", dev_type: "V", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}

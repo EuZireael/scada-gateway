@@ -13,13 +13,18 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class TelemetryProducer {
 
     private static final Logger log = LoggerFactory.getLogger(TelemetryProducer.class);
+
+    // Дешёвый messageId: монотонный счётчик вместо UUID.randomUUID() (SecureRandom,
+    // синхронизирован — узкое место на потоке 2471 сообщение/сек). Сид от времени
+    // старта → устойчив к коллизиям между перезапусками процесса.
+    private static final AtomicLong MSG_SEQ = new AtomicLong(System.currentTimeMillis() * 1000);
 
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final String telemetryTopic;
@@ -44,7 +49,7 @@ public class TelemetryProducer {
 
         try {
             TelemetryMessage message = new TelemetryMessage();
-            message.setMessageId(UUID.randomUUID().toString());
+            message.setMessageId(Long.toString(MSG_SEQ.incrementAndGet()));
             message.setType("TELEMETRY");
             // tagId = id канала в общей БД каналов (channel.node.id), а не локальный
             // PK шлюза: по нему Monitor резолвит канал. Фолбэк на PK, если не задан.
@@ -103,7 +108,7 @@ public class TelemetryProducer {
         if (!kafkaEnabled) return;
         try {
             TelemetryMessage message = new TelemetryMessage();
-            message.setMessageId(UUID.randomUUID().toString());
+            message.setMessageId(Long.toString(MSG_SEQ.incrementAndGet()));
             message.setType("TELEMETRY");
             message.setTagId(channelId);
             message.setTagName(channelName);

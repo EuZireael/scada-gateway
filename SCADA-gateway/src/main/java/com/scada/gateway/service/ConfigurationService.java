@@ -36,6 +36,9 @@ public class ConfigurationService {
     private Map<Long, ControllerEntity> controllerCache = new HashMap<>();
     private Map<Long, TagEntity> tagCache = new HashMap<>();
     private Map<String, TagEntity> tagByNodeIdCache = new HashMap<>();
+    // Готовые списки активных тегов по контроллеру — чтобы poll-поток не гонял
+    // stream().filter() по всем ~2471 тегу на КАЖДЫЙ цикл опроса.
+    private Map<Long, List<TagEntity>> tagsByControllerCache = new HashMap<>();
 
     // Явный конструктор (вместо @RequiredArgsConstructor)
     public ConfigurationService(ControllerRepository controllerRepository,
@@ -180,6 +183,12 @@ public class ConfigurationService {
             .filter(t -> t.getNodeId() != null)
             .collect(Collectors.toMap(TagEntity::getNodeId, t -> t));
 
+        // Предгруппировка активных тегов по контроллеру (один раз, а не каждый цикл).
+        tagsByControllerCache = tags.stream()
+            .filter(TagEntity::isEnabled)
+            .filter(t -> t.getController() != null && t.getController().getId() != null)
+            .collect(Collectors.groupingBy(t -> t.getController().getId()));
+
         log.info("Configuration loaded: {} controllers, {} tags",
             controllers.size(), tags.size());
     }
@@ -195,10 +204,8 @@ public class ConfigurationService {
     }
 
     public List<TagEntity> getTagsForController(Long controllerId) {
-        return tagCache.values().stream()
-            .filter(t -> t.getController().getId().equals(controllerId))
-            .filter(TagEntity::isEnabled)
-            .collect(Collectors.toList());
+        // Из предгруппированного кэша — без stream/filter на каждый цикл опроса.
+        return tagsByControllerCache.getOrDefault(controllerId, List.of());
     }
 
     public TagEntity getTagByNodeId(String nodeId) {
