@@ -89,6 +89,13 @@ public class OpcUaClientServiceDB {
     /** Писать ли каждую точку в локальную БД шлюза. Значения в Kafka идут всегда. */
     @Value("${gateway.persist-telemetry:true}")
     private boolean persistTelemetry;
+    /**
+     * A3: слать ли телеметрию при value==null (обрыв, quality=BAD). По умолчанию
+     * false — иначе null как falsy «уверенно закрыл бы клапан» на фронте без правок
+     * B2/C4. Включать только когда монитор (C4) и фронт (B2) готовы к «нет данных».
+     */
+    @Value("${gateway.send-bad-frames:false}")
+    private boolean sendBadFrames;
 
     /** Активный (ещё не закрытый) аларм по тегу: стабильный alarmId на весь эпизод. */
     private static final class ActiveAlarm {
@@ -631,8 +638,12 @@ public class OpcUaClientServiceDB {
             // per-tag на каждый опрос — только debug (иначе поток INFO на 2471 тег/цикл).
             log.debug("📊 {} = {}", tag.getName(), value);
         } else {
-            // NULL при обрыве — не спамим на каждый тег; состояние связи фиксирует
-            // markControllerDown на уровне цикла опроса.
+            // A3: NULL при обрыве. BAD-кадр шлём только при включённом флаге — иначе тег
+            // замирает на последнем значении (безопаснее, чем falsy null на фронте без
+            // правок B2/C4). Состояние связи фиксирует markControllerDown на уровне цикла.
+            if (sendBadFrames) {
+                telemetryProducer.sendTelemetry(tag, null, quality, timestamp);
+            }
             log.debug("⚠️ {} = NULL (quality: {})", tag.getName(), quality);
         }
     }
@@ -724,16 +735,21 @@ public class OpcUaClientServiceDB {
         if (tag == null) {
             return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "Тег не найден: " + tagId, null);
         }
-        // A6: запись реализована ТОЛЬКО для OPC UA. Modbus (1877 каналов) и любой иной
-        // протокол → честный REJECTED_PROTOCOL_UNSUPPORTED, а не вводящее в заблуждение
-        // «контроллер не подключён». Протокол наружу не утекает — это внутренний диагноз
-        // шлюза для оператора.
-        if (!isOpcUaTag(tag)) {
-            String proto = tag.getProtocol() != null ? tag.getProtocol() : "неизвестный";
-            return new CommandOutcome(false, CommandStatus.REJECTED_PROTOCOL_UNSUPPORTED,
-                    "Запись не реализована для протокола: " + proto, null);
+        // Маршрутизация по протоколу — деталь реализации шлюза, наружу не торчит (A6).
+        // Запись реализована для OPC UA и Modbus; иной протокол → PROTOCOL_UNSUPPORTED.
+        if (isOpcUaTag(tag)) {
+            return writeOpcUa(tag, value, dataType);
         }
+        if (isModbusTag(tag)) {
+            return writeModbus(tag, value, dataType);
+        }
+        String proto = tag.getProtocol() != null ? tag.getProtocol() : "неизвестный";
+        return new CommandOutcome(false, CommandStatus.REJECTED_PROTOCOL_UNSUPPORTED,
+                "Запись не реализована для протокола: " + proto, null);
+    }
 
+    /** Запись по OPC UA. */
+    private CommandOutcome writeOpcUa(TagEntity tag, Object value, String dataType) {
         Long controllerId = tag.getController() != null ? tag.getController().getId() : null;
         OpcUaClient client = controllerId != null ? opcClients.get(controllerId) : null;
         if (client == null) {
@@ -760,10 +776,10 @@ public class OpcUaClientServiceDB {
             StatusCode status = client.writeValue(nodeId, dataValue).get();
 
             if (status.isGood()) {
-                log.info("✍ Записано {} = {} (tag {})", tag.getName(), variant.getValue(), tagId);
+                log.info("✍ OPC UA записано {} = {} (tag {})", tag.getName(), variant.getValue(), tag.getId());
                 eventLogService.logEvent("COMMAND_APPLIED", "OpcUaClient", "INFO",
                         String.format("Записано %s = %s", tag.getName(), value),
-                        Map.of("tagId", tagId, "value", String.valueOf(value)));
+                        Map.of("tagId", tag.getId(), "value", String.valueOf(value)));
                 return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
             }
             // Разбор неудачного StatusCode на осмысленные для оператора исходы.
@@ -771,10 +787,61 @@ public class OpcUaClientServiceDB {
                     "OPC UA отклонил запись: " + status, null);
 
         } catch (Exception e) {
-            log.error("Ошибка записи тега {}: {}", tagId, e.getMessage());
+            log.error("Ошибка записи тега {}: {}", tag.getName(), e.getMessage());
             eventLogService.logError("OpcUaClient", "Ошибка записи тега " + tag.getName(), e, tag, null);
             return new CommandOutcome(false, CommandStatus.FAILED_WRITE, "Ошибка записи: " + e.getMessage(), null);
         }
+    }
+
+    /**
+     * A6: запись по Modbus. Симметрична чтению (holding-регистры, адрес −40001,
+     * FLOAT little-endian по словам). BOOLEAN/INT → один регистр (FC06),
+     * FLOAT → два регистра (FC16). У Modbus нет понятия sourceTime и «not writable»
+     * на уровне узла, поэтому исходы грубее OPC UA: TYPE_MISMATCH / NO_CONNECTION /
+     * WRITE.
+     */
+    private CommandOutcome writeModbus(TagEntity tag, Object value, String dataType) {
+        ControllerEntity ctrl = tag.getController();
+        if (ctrl == null || ctrl.getEndpoint() == null) {
+            return new CommandOutcome(false, CommandStatus.FAILED_NO_CONNECTION, "Контроллер не задан", null);
+        }
+        if (tag.getModbusAddress() == null) {
+            return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "У тега нет Modbus-адреса", null);
+        }
+        String host = extractModbusHost(ctrl.getEndpoint());
+        int port = extractModbusPort(ctrl.getEndpoint(), 502);
+        int addr = tag.getModbusAddress();
+        int unitId = tag.getModbusUnitId();
+        String dt = dataType != null ? dataType : tag.getDataType();
+
+        try {
+            if ("FLOAT".equalsIgnoreCase(dt)) {
+                modbusClientService.writeFloat(host, port, addr, unitId, toFloat(value));
+            } else if ("INT".equalsIgnoreCase(dt) || "INT16".equalsIgnoreCase(dt)) {
+                modbusClientService.writeRegister(host, port, addr, unitId, toInt(value) & 0xFFFF);
+            } else if ("BOOLEAN".equalsIgnoreCase(dt)) {
+                modbusClientService.writeRegister(host, port, addr, unitId, toBool(value) ? 1 : 0);
+            } else {
+                return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
+                        "Неизвестный тип Modbus-тега: " + dt, null);
+            }
+        } catch (NumberFormatException | ClassCastException e) {
+            return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
+                    "Значение не приводится к типу тега: " + e.getMessage(), null);
+        } catch (java.io.IOException e) {
+            return new CommandOutcome(false, CommandStatus.FAILED_NO_CONNECTION,
+                    "Нет связи с контроллером: " + e.getMessage(), null);
+        } catch (Exception e) {
+            log.error("Ошибка записи Modbus-тега {}: {}", tag.getName(), e.getMessage());
+            eventLogService.logError("ModbusClient", "Ошибка записи тега " + tag.getName(), e, tag, null);
+            return new CommandOutcome(false, CommandStatus.FAILED_WRITE, "Ошибка записи Modbus: " + e.getMessage(), null);
+        }
+
+        log.info("✍ Modbus записано {} = {} (addr {})", tag.getName(), value, addr);
+        eventLogService.logEvent("COMMAND_APPLIED", "ModbusClient", "INFO",
+                String.format("Записано %s = %s", tag.getName(), value),
+                Map.of("tagName", tag.getName(), "value", String.valueOf(value)));
+        return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
     }
 
     /** Классификация неудачного StatusCode записи в фиксированный перечень исходов (A5). */

@@ -4,11 +4,16 @@ import com.ghgande.j2mod.modbus.ModbusException;
 import com.ghgande.j2mod.modbus.io.ModbusTCPTransaction;
 import com.ghgande.j2mod.modbus.msg.ReadMultipleRegistersRequest;
 import com.ghgande.j2mod.modbus.msg.ReadMultipleRegistersResponse;
+import com.ghgande.j2mod.modbus.msg.WriteSingleRegisterRequest;
+import com.ghgande.j2mod.modbus.msg.WriteMultipleRegistersRequest;
+import com.ghgande.j2mod.modbus.procimg.Register;
+import com.ghgande.j2mod.modbus.procimg.SimpleRegister;
 import com.ghgande.j2mod.modbus.net.TCPMasterConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -185,6 +190,83 @@ public class ModbusClientService {
             return (intValue & 0x01) != 0;
         }
         return null;
+    }
+
+    /**
+     * Запись одного holding-регистра (FC06) — для INT16 и BOOLEAN (0/1).
+     * Симметрично чтению: адрес 40001 → 0. При ошибке бросает (в отличие от чтения,
+     * которое в горячем цикле возвращает null): команд единицы, причина отказа нужна
+     * вызывающему для статуса результата.
+     */
+    public void writeRegister(String host, int port, int address, int unitId, int value)
+            throws Exception {
+        String key = host + ":" + port;
+        TCPMasterConnection connection = getConnection(key, host, port);
+        if (connection == null) {
+            throw new IOException("нет соединения с " + key);
+        }
+        try {
+            synchronized (connection) {
+                if (!connection.isConnected()) {
+                    connection.connect();
+                }
+                int modbusAddress = address - 40001;
+                if (modbusAddress < 0) {
+                    throw new IllegalArgumentException("Invalid Modbus address: " + address);
+                }
+                WriteSingleRegisterRequest request =
+                        new WriteSingleRegisterRequest(modbusAddress, new SimpleRegister(value));
+                request.setUnitID(unitId);
+                ModbusTCPTransaction transaction = new ModbusTCPTransaction(connection);
+                transaction.setRequest(request);
+                transaction.execute();
+                log.debug("✍ Modbus рег [{}] = {}", address, value);
+                reportOk(key);
+            }
+        } catch (Exception e) {
+            reportFailure(key, e.getMessage());
+            resetConnection(key, connection);
+            throw e;
+        }
+    }
+
+    /**
+     * Запись FLOAT в 2 holding-регистра (FC16). Кодировка симметрична readFloat:
+     * little-endian по словам — reg1 = младшее слово, reg2 = старшее.
+     */
+    public void writeFloat(String host, int port, int address, int unitId, float value)
+            throws Exception {
+        String key = host + ":" + port;
+        TCPMasterConnection connection = getConnection(key, host, port);
+        if (connection == null) {
+            throw new IOException("нет соединения с " + key);
+        }
+        try {
+            synchronized (connection) {
+                if (!connection.isConnected()) {
+                    connection.connect();
+                }
+                int modbusAddress = address - 40001;
+                if (modbusAddress < 0) {
+                    throw new IllegalArgumentException("Invalid Modbus address: " + address);
+                }
+                int bits = Float.floatToIntBits(value);
+                Register reg1 = new SimpleRegister(bits & 0xFFFF);          // младшее слово
+                Register reg2 = new SimpleRegister((bits >>> 16) & 0xFFFF); // старшее слово
+                WriteMultipleRegistersRequest request =
+                        new WriteMultipleRegistersRequest(modbusAddress, new Register[]{reg1, reg2});
+                request.setUnitID(unitId);
+                ModbusTCPTransaction transaction = new ModbusTCPTransaction(connection);
+                transaction.setRequest(request);
+                transaction.execute();
+                log.debug("✍ Modbus FLOAT [{}] = {}", address, value);
+                reportOk(key);
+            }
+        } catch (Exception e) {
+            reportFailure(key, e.getMessage());
+            resetConnection(key, connection);
+            throw e;
+        }
     }
 
     /**
