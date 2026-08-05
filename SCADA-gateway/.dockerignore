@@ -1,0 +1,11 @@
+# Игнорируем весь target, КРОМЕ готового fat-jar (его копирует Dockerfile).
+target/*
+!target/*.jar
+target/*-sources.jar
+target/*-javadoc.jar
+**/*.bak
+.idea/
+*.iml
+.git/
+.gitignore
+*.md

@@ -1,0 +1,101 @@
+# ============================================================================
+# Продюсер-сторона SCADA для разработки монитора — ПОЛНОСТЬЮ ОФФЛАЙН.
+# Все 4 образа грузятся из tar (см. load-images.sh) → ничего не тянется из сети
+# (pull_policy: never на каждом сервисе).
+#
+# Шлюз опрашивает симулятор (реплей архива BN1_MCA1 по OPC UA и Modbus) и
+# публикует телеметрию в Kafka (топик scada-telemetry): key = путь канала,
+# tagId = channel.node.id.
+#
+# Запуск:   ./load-images.sh  &&  docker compose up -d
+# Смотреть: docker compose logs -f gateway
+# Kafka для монитора С ХОСТА:  localhost:9094   (внутри сети: kafka:9092)
+# ============================================================================
+services:
+
+  postgres:
+    image: postgres:16
+    pull_policy: never
+    container_name: scada-postgres
+    environment:
+      POSTGRES_DB: scada_db
+      POSTGRES_USER: scada_user
+      POSTGRES_PASSWORD: scada_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scada_user -d scada_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [scada]
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    pull_policy: never
+    container_name: scada-kafka
+    ports:
+      - "9094:9094"          # доступ для консюмера монитора С ХОСТА: localhost:9094
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # INTERNAL — для шлюза внутри сети; EXTERNAL — для монитора с хоста.
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: Gr_a-ePsS8WLCMJ_AzUbDw
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+    networks: [scada]
+
+  simulator:
+    image: localhost/scada-simulator:1.0
+    pull_policy: never
+    container_name: scada-simulator
+    environment:
+      OPCUA_ENDPOINT: "opc.tcp://simulator:4840"   # анонсирует резолвимое имя
+      MODBUS_PORT: "5020"
+    ports:
+      - "4840:4840"          # опционально: OPC UA с хоста
+      - "5020:5020"          # опционально: Modbus с хоста
+    restart: unless-stopped
+    networks: [scada]
+
+  gateway:
+    image: localhost/scada-gateway:1.0
+    pull_policy: never
+    container_name: scada-gateway
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/scada_db"
+      SPRING_DATASOURCE_USERNAME: "scada_user"
+      SPRING_DATASOURCE_PASSWORD: "scada_password"
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      SIM_HOST: "simulator"
+    ports:
+      - "8888:8888"          # actuator/http шлюза
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      simulator:
+        condition: service_started
+    restart: unless-stopped
+    networks: [scada]
+
+networks:
+  scada:
+    driver: bridge
+
+volumes:
+  pgdata:

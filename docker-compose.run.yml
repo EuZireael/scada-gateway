@@ -1,0 +1,82 @@
+# Лёгкий запуск стека: шлюз стартует из ГОТОВОГО jar (собран на хосте) в стоковом
+# JRE-образе — без тяжёлой maven-сборки внутри контейнера (она перегружала VM).
+# Симулятор собирается как обычно (лёгкий python-образ).
+#   docker compose -f docker-compose.run.yml up -d
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: scada-gw-postgres
+    environment:
+      POSTGRES_DB: scada_db
+      POSTGRES_USER: scada_user
+      POSTGRES_PASSWORD: scada_password
+    ports: ["5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scada_user -d scada_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [scada]
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: scada-gw-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: scada-cluster-001
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks: [scada]
+
+  simulator:
+    build: ./plc-simulator
+    container_name: scada-gw-simulator
+    environment:
+      OPCUA_ENDPOINT: "opc.tcp://simulator:4840"
+      MODBUS_PORT: "5020"
+    ports: ["4840:4840", "5020:5020"]
+    restart: unless-stopped
+    networks: [scada]
+
+  gateway:
+    image: eclipse-temurin:21-jre
+    container_name: scada-gw-gateway
+    working_dir: /app
+    command: ["java", "-jar", "/app/app.jar"]
+    volumes:
+      # :Z — SELinux-relabel (Fedora Enforcing), иначе контейнер не прочитает jar.
+      - ./SCADA-gateway/target/SCADA-gateway-0.0.1-SNAPSHOT.jar:/app/app.jar:ro,Z
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/scada_db"
+      SPRING_DATASOURCE_USERNAME: "scada_user"
+      SPRING_DATASOURCE_PASSWORD: "scada_password"
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      SIM_HOST: "simulator"
+    ports: ["8888:8888"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      simulator:
+        condition: service_started
+    restart: unless-stopped
+    networks: [scada]
+
+networks:
+  scada:
+    driver: bridge
