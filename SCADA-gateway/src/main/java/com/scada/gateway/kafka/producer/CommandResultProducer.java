@@ -33,7 +33,11 @@ public class CommandResultProducer {
             log.debug("Kafka disabled, skipping command result for: {}", result.getTagName());
             return;
         }
-        kafkaTemplate.send(resultsTopic, result.getCommandId(), result);
+        // Ключ результата = путь канала (tagName): держит результаты одного тега в
+        // одной партиции по порядку. Корреляция у монитора — по commandId в теле,
+        // так что фолбэк на commandId (если tagName пуст) безопасен.
+        String key = result.getTagName() != null ? result.getTagName() : result.getCommandId();
+        kafkaTemplate.send(resultsTopic, key, result);
         log.info("→ результат команды {}: {} ({})",
                 result.getCommandId(), result.getStatus(), result.getMessage());
     }

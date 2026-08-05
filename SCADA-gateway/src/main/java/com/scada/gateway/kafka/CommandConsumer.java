@@ -64,7 +64,7 @@ public class CommandConsumer {
         result.setCommandId(cmd.getCommandId());
         result.setTagId(cmd.getTagId());
         result.setTagName(cmd.getTagName());
-        result.setStatus(outcome.status);
+        result.setStatus(outcome.status.name());
         result.setSuccess(outcome.success);
         result.setMessage(outcome.message);
         result.setAppliedValue(outcome.appliedValue);
@@ -75,7 +75,7 @@ public class CommandConsumer {
         details.put("tagId", cmd.getTagId());
         details.put("value", String.valueOf(cmd.getValue()));
         details.put("requestedBy", cmd.getRequestedBy());
-        details.put("status", outcome.status);
+        details.put("status", outcome.status.name());
         eventLogService.logEvent("COMMAND", "CommandConsumer",
                 outcome.success ? "INFO" : "WARNING",
                 String.format("Команда %s = %s от %s: %s",

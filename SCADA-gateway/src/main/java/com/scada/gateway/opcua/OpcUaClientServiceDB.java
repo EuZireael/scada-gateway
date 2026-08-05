@@ -24,6 +24,7 @@ import org.eclipse.milo.opcua.stack.core.types.structured.EndpointDescription;
 import org.eclipse.milo.opcua.stack.core.types.structured.ReadValueId;
 import org.eclipse.milo.opcua.stack.core.types.structured.ReadResponse;
 import org.eclipse.milo.opcua.stack.core.AttributeId;
+import org.eclipse.milo.opcua.stack.core.StatusCodes;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -715,23 +716,39 @@ public class OpcUaClientServiceDB {
     public CommandOutcome writeTag(Long tagId, Object value, String dataType) {
         TagEntity tag = tagCache.get(tagId);
         if (tag == null) {
-            return new CommandOutcome(false, "REJECTED", "Тег не найден: " + tagId, null);
+            return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "Тег не найден: " + tagId, null);
         }
+        // A6: запись реализована ТОЛЬКО для OPC UA. Modbus (1877 каналов) и любой иной
+        // протокол → честный REJECTED_PROTOCOL_UNSUPPORTED, а не вводящее в заблуждение
+        // «контроллер не подключён». Протокол наружу не утекает — это внутренний диагноз
+        // шлюза для оператора.
         if (!isOpcUaTag(tag)) {
-            return new CommandOutcome(false, "REJECTED", "Запись поддержана только для OPC UA тегов", null);
+            String proto = tag.getProtocol() != null ? tag.getProtocol() : "неизвестный";
+            return new CommandOutcome(false, CommandStatus.REJECTED_PROTOCOL_UNSUPPORTED,
+                    "Запись не реализована для протокола: " + proto, null);
         }
 
         Long controllerId = tag.getController() != null ? tag.getController().getId() : null;
         OpcUaClient client = controllerId != null ? opcClients.get(controllerId) : null;
         if (client == null) {
-            return new CommandOutcome(false, "FAILED", "Контроллер не подключён", null);
+            return new CommandOutcome(false, CommandStatus.FAILED_NO_CONNECTION, "Контроллер не подключён", null);
+        }
+
+        // Приведение типа — ОТДЕЛЬНО от записи: ошибка конвертации значения к типу тега
+        // это ошибка данных/конфигурации (REJECTED_TYPE_MISMATCH), а не сбой связи.
+        NodeId nodeId;
+        Variant variant;
+        try {
+            nodeId = NodeId.parse(tag.getNodeId());
+            String dt = dataType != null ? dataType : tag.getDataType();
+            variant = toVariant(dt, value);
+        } catch (Exception e) {
+            log.warn("Значение '{}' не приводится к типу тега {}: {}", value, tag.getName(), e.getMessage());
+            return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
+                    "Значение не приводится к типу тега: " + e.getMessage(), null);
         }
 
         try {
-            NodeId nodeId = NodeId.parse(tag.getNodeId());
-            String dt = dataType != null ? dataType : tag.getDataType();
-            Variant variant = toVariant(dt, value);
-
             // status/time = null: их проставляет сервер (канон milo для записи).
             DataValue dataValue = new DataValue(variant, null, null);
             StatusCode status = client.writeValue(nodeId, dataValue).get();
@@ -741,15 +758,29 @@ public class OpcUaClientServiceDB {
                 eventLogService.logEvent("COMMAND_APPLIED", "OpcUaClient", "INFO",
                         String.format("Записано %s = %s", tag.getName(), value),
                         Map.of("tagId", tagId, "value", String.valueOf(value)));
-                return new CommandOutcome(true, "APPLIED", "Записано значение " + value, value);
+                return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
             }
-            return new CommandOutcome(false, "REJECTED", "OPC UA отклонил запись: " + status, null);
+            // Разбор неудачного StatusCode на осмысленные для оператора исходы.
+            return new CommandOutcome(false, classifyBadStatus(status),
+                    "OPC UA отклонил запись: " + status, null);
 
         } catch (Exception e) {
             log.error("Ошибка записи тега {}: {}", tagId, e.getMessage());
             eventLogService.logError("OpcUaClient", "Ошибка записи тега " + tag.getName(), e, tag, null);
-            return new CommandOutcome(false, "FAILED", "Ошибка записи: " + e.getMessage(), null);
+            return new CommandOutcome(false, CommandStatus.FAILED_WRITE, "Ошибка записи: " + e.getMessage(), null);
         }
+    }
+
+    /** Классификация неудачного StatusCode записи в фиксированный перечень исходов (A5). */
+    private CommandStatus classifyBadStatus(StatusCode status) {
+        long code = status.getValue();
+        if (code == StatusCodes.Bad_NotWritable || code == StatusCodes.Bad_WriteNotSupported) {
+            return CommandStatus.REJECTED_NOT_WRITABLE;
+        }
+        if (code == StatusCodes.Bad_TypeMismatch || code == StatusCodes.Bad_OutOfRange) {
+            return CommandStatus.REJECTED_TYPE_MISMATCH;
+        }
+        return CommandStatus.FAILED_WRITE;
     }
 
     /**
@@ -760,7 +791,7 @@ public class OpcUaClientServiceDB {
     public CommandOutcome writeTagByName(String tagName, Object value, String dataType) {
         TagEntity tag = tagName == null ? null : tagsByName.get(tagName);
         if (tag == null) {
-            return new CommandOutcome(false, "REJECTED", "Тег не найден по имени: " + tagName, null);
+            return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "Тег не найден по имени: " + tagName, null);
         }
         return writeTag(tag.getId(), value, dataType);
     }
@@ -796,14 +827,29 @@ public class OpcUaClientServiceDB {
         return Double.parseDouble(String.valueOf(v).trim());
     }
 
+    /**
+     * Фиксированный перечень исходов команды записи (A5). Даёт оператору различить
+     * ошибку конфигурации («канала нет») от эксплуатационной («нет связи») без
+     * парсинга текста message. На провод уходит .name().
+     */
+    public enum CommandStatus {
+        APPLIED,
+        REJECTED_UNKNOWN_TAG,
+        REJECTED_NOT_WRITABLE,
+        REJECTED_TYPE_MISMATCH,
+        REJECTED_PROTOCOL_UNSUPPORTED,
+        FAILED_NO_CONNECTION,
+        FAILED_WRITE
+    }
+
     /** Исход записи тега для формирования CommandResultMessage. */
     public static final class CommandOutcome {
         public final boolean success;
-        public final String status;
+        public final CommandStatus status;
         public final String message;
         public final Object appliedValue;
 
-        public CommandOutcome(boolean success, String status, String message, Object appliedValue) {
+        public CommandOutcome(boolean success, CommandStatus status, String message, Object appliedValue) {
             this.success = success;
             this.status = status;
             this.message = message;
