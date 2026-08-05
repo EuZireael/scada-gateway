@@ -3,6 +3,13 @@
 '  SCADA Gateway — место проекта в общей архитектуре продукта.
 '  Текстовое UML-описание (дополняет Архитектура_SCADA_расширенная.drawio).
 '  Рендер: PlantUML (plantuml architecture.puml) или любой online-viewer.
+'
+'  ЧТО ЭТО ЗА СИСТЕМА (в двух словах)
+'  Контроллеры (ПЛК) на объекте измеряют физику (давление, расход, уровень…)
+'  и отдают значения по промышленным протоколам. Шлюз (ЭТОТ проект) забирает
+'  эти значения, приводит к единому виду и публикует в шину Kafka. Из Kafka их
+'  читает верхний уровень SCADA (Монитор/HMI, мобильное приложение).
+'  Шлюз = «переводчик» между железом (OPC UA/Modbus) и продуктом (Kafka).
 ' ============================================================================
 title Архитектура SCADA: шлюз (Gateway) в контуре продукта
 
@@ -11,7 +18,8 @@ skinparam shadowing false
 skinparam roundcorner 12
 skinparam defaultFontName "Segoe UI"
 skinparam ArrowColor #37474F
-skinparam ArrowFontColor #546E7A
+skinparam ArrowFontColor #37474F
+skinparam ArrowThickness 1.2
 skinparam rectangle {
   BorderColor #90A4AE
   FontColor  #263238
@@ -29,77 +37,168 @@ skinparam queue {
   BorderColor #F9A825
   BackgroundColor #FFF8E1
 }
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #FBC02D
+  FontColor #4E342E
+}
 
-' --------------------------- ПОЛЕВОЙ УРОВЕНЬ -------------------------------
-rectangle "Полевой уровень\n(контроллеры ПЛК)" as FIELD #F1F8E9 {
-  component "Phoenix Contact\nOPC UA сервер :4840\nтипы V, VC, M, LS, FS, GS,\nDI, DO, HA, HL, SB" as PLC_OPC
-  component "WAGO\nModbus TCP :5020\nQT, PT, TE, LT, AI, AO,\nFQT, WT, объекты/рецепты" as PLC_MB
+' =====================  ПОЛЕВОЙ УРОВЕНЬ (ЖЕЛЕЗО)  ==========================
+rectangle "Полевой уровень — контроллеры ПЛК\n(источник ИЗМЕРЕНИЙ, «низ» системы)" as FIELD #F1F8E9 {
+  component "Phoenix Contact\n**OPC UA сервер**  opc.tcp://…:4840\n594 узла (теги)\nтипы: V, VC, M, LS, FS, GS,\nDI, DO, HA, HL, SB" as PLC_OPC
+  component "WAGO\n**Modbus TCP**  modbus://…:5020\n1877 каналов (тегов)\nтипы: QT, PT, TE, LT, AI, AO,\nFQT, WT, объекты/рецепты" as PLC_MB
   note bottom of PLC_OPC
-    В стенде обоих контроллеров играет
-    **PLC-симулятор** (plc.py): проигрывает
-    архив BN1_MCA1 (170 серий, 5 сут, real-time
-    loop) в РОДНОМ формате протоколов.
-    Формат-ориентир — прошивка ptusa_main.
+    **Что это.** Реальные ПЛК на объекте: измеряют физические
+    величины и публикуют их наружу по своему протоколу.
+    В стенде обоих контроллеров заменяет **PLC-симулятор**
+    (plc.py): проигрывает архив BN1_MCA1 (170 серий, ~5 суток,
+    real-time loop) в РОДНОМ формате протоколов — для шлюза
+    он неотличим от настоящего железа. Формат-ориентир —
+    прошивка ptusa_main.
   end note
 }
 
-' ------------------------------- ШЛЮЗ (МОЙ ПРОЕКТ) -------------------------
-rectangle "**SCADA Gateway**  (Spring Boot 3.2.4 / Java 21)   ←  этот проект" as GW #E8EAF6 {
-  component "OPC UA Client\n(Eclipse Milo)\nтипизированное чтение" as C_OPC
-  component "Modbus Client\n(j2mod)\nfloat32 LE / int16" as C_MB
-  component "Connection Supervisor\n@Scheduled 10s\nавто-reconnect, stale>30s,\nтокен поколения (anti-flap)" as SUP
-  component "Alarm Engine\nedge-триггер по уставкам\np1/p99 архива, deadband" as ALM
-  component "Event / Journal\nevent_log + смена качества" as EVT
-  component "Configuration Service\nupsert тегов из application.yaml\n(tagId = node.id)" as CFG
-  component "Kafka Producers\nTelemetry / Alarm / Event\n+ Command consumer" as PROD
+' =====================  ШЛЮЗ (ЭТОТ ПРОЕКТ)  ================================
+rectangle "**SCADA Gateway**  (Spring Boot 3.2.4 / Java 21)   ←  ЭТОТ проект\n«переводчик»: железо (OPC UA/Modbus)  →  шина (Kafka)" as GW #E8EAF6 {
+  component "**OPC UA Client**  (Eclipse Milo)\nЗАБИРАЕТ значения у Phoenix.\nВсе 594 узла — ОДНИМ батч-чтением\nclient.read(...) за цикл (было 594\nотдельных запроса). Кэш NodeId." as C_OPC
+  component "**Modbus Client**  (j2mod)\nЗАБИРАЕТ значения у WAGO.\nЧтение holding-регистров (FC03),\nдекод float32 LE / int16." as C_MB
+  component "**Connection Supervisor**\n@Scheduled, каждые 10 с\nсторож живости связи с контроллерами" as SUP
+  component "**Configuration Service**\nна старте: upsert тегов из\ncontrollers.yaml → БД шлюза.\ntagId = node.id. Кэш тегов\nпо контроллеру (без stream/цикл)." as CFG
+  component "**Alarm Engine**  (флаг, по умолч. ВЫКЛ)\nedge-триггер по уставкам p1/p99,\ndeadband. gateway.alarms.enabled=false\n→ пороги считает Монитор." as ALM
+  component "**Event / Journal**\nсобытия связи + смена качества\nтега → event_log (БД) и Kafka." as EVT
+  component "**Kafka Producers**\nTelemetry / Alarm / Event\n+ Command consumer\nacks=1, snappy, батч, monotonic id" as PROD
 }
 
-' ------------------------------- ШИНА -------------------------------------
-queue "**Apache Kafka**\nscada-telemetry\nscada-alarms\nscada-events\nscada-commands\nscada-command-results" as KAFKA
+note right of SUP
+  **Connection Supervisor — зачем он и к чему.**
+  Проблема: OPC UA умеет «тихо» умирать — чтения зависают,
+  а исключений нет, поэтому обычный poll-цикл обрыв НЕ замечает.
+  Что делает: каждые 10 с проверяет каждый контроллер по
+  lastGoodReadMs. Если клиент == null ИЛИ нет удачных чтений
+  > 30 с → считает связь мёртвой, помечает DISCONNECTED и
+  переподнимает сессию (reconnectOpcUa: гасит старый поток и
+  клиента, создаёт новые). Modbus чинится лениво сам (backoff).
+  Зачем токен поколения (pollGeneration): без него старый и
+  новый poll-потоки одновременно дёргали статус →
+  «дребезг» CONNECTED↔DISCONNECTED. Токен глушит старый поток:
+  ровно 1 «обрыв» + 1 «восстановлена» на инцидент.
+end note
 
-' ------------------------------ БАЗА КАНАЛОВ -------------------------------
-database "**База каналов**\nchannel_dump.sql (EAV)\nnode / param / template\n3449 узлов · 2471 канал · 17542 param" as CHDB
+note bottom of CFG
+  **Источник конфигурации.** controllers.yaml (594 OPC UA + 1877
+  Modbus = 2471 тег) вынесен из application.yaml. На старте
+  ConfigurationService делает upsert тегов в СВОЮ БД шлюза и
+  строит кэши. tagId = node.id — общий идентификатор канала,
+  по нему Монитор потом находит канал в реестре каналов.
+end note
 
-' ------------------------------ ПОТРЕБИТЕЛИ --------------------------------
-rectangle "Верхний уровень (SCADA HMI)" as TOP #FFF3E0 {
-  component "Редактор проекта\nкарты, состояния, шаблоны,\nсвязь свойств с каналами, скрипты" as EDIT
-  component "Монитор (runtime)\nruntime-модель, скрипты,\nактуальные теги и состояния" as MON
-  component "Мобильное приложение\nклиент / сервер / админ-панель\n(scada.mobile.*)" as MOB
+' =====================  ШИНА СООБЩЕНИЙ  ===================================
+queue "**Apache Kafka**  (шина между шлюзом и продуктом)\nscada-telemetry — значения тегов (основной поток)\nscada-alarms — алармы (если включены в шлюзе)\nscada-events — журнал связи/системные\nscada-commands / scada-command-results — команды оператора" as KAFKA
+
+' =====================  БД ШЛЮЗА (РАНТАЙМ)  ================================
+database "**БД шлюза** — scada_db (PostgreSQL :5433)\nсобственная операционная база.\nСхему создаёт Hibernate (ddl-auto=update):\ntags · controllers · telemetry · event_log · alarms\nЗапись телеметрии — БАТЧем (saveAll), флаг\ngateway.persist-telemetry (по умолч. ВКЛ)" as GWDB
+
+' =====================  РЕЕСТР КАНАЛОВ (ОФЛАЙН-ИСТОЧНИК)  ==================
+database "**Реестр каналов** — channel_dump.sql (EAV)\nnode / param / template · 3449 узлов ·\n2471 канал · 17542 param.\nОБЩИЙ источник правды о каналах (node.id)." as CHDB
+
+' =====================  ВЕРХНИЙ УРОВЕНЬ (ПОТРЕБИТЕЛИ)  ====================
+rectangle "Верхний уровень — SCADA HMI (потребители данных)" as TOP #FFF3E0 {
+  component "**Редактор проекта**\nсоздаёт каналы, карты, состояния,\nшаблоны; связывает свойства\nс каналами; скрипты." as EDIT
+  component "**Монитор (runtime)**\nчитает телеметрию/алармы из Kafka,\nрезолвит канал по node.id, собирает\nобъект-прибор, считает пороги,\nшлёт команды оператора." as MON
+  component "**Мобильное приложение**\nклиент / сервер / админ-панель\n(scada.mobile.*)" as MOB
 }
 
-' ------------------------------- СВЯЗИ ------------------------------------
-PLC_OPC -down-> C_OPC : "OPC UA\nтипизированные узлы"
-PLC_MB  -down-> C_MB  : "Modbus TCP\nholding-регистры"
+' ===========================  СВЯЗИ  ======================================
 
-C_OPC --> CFG
-C_MB  --> CFG
-CFG ..> CHDB : "адреса/параметры\nопроса каналов"
-C_OPC --> ALM
-C_MB  --> ALM
-C_OPC --> EVT
-SUP ..> C_OPC : "переподнять сессию"
-SUP ..> C_MB  : "лениво само-лечится"
+' -- Полевой уровень → шлюз: ЭТО СВЯЗЬ С КОНТРОЛЛЕРОМ по протоколу --
+PLC_OPC -down-> C_OPC : "OPC UA — связь с контроллером"
+note on link
+  **Связь с контроллером (Phoenix) по OPC UA.**
+  Направление: контроллер → шлюз (чтение).
+  Шлюз опрашивает 594 узла ОДНИМ батч-запросом за цикл
+  и получает на каждый узел: значение + quality + timestamp.
+  Значение уже типизировано (число/булево) — приводить из
+  строки не нужно.
+end note
 
-CFG  --> PROD : "значения тегов"
-ALM  --> PROD : "алармы"
-EVT  --> PROD : "события / журнал"
+PLC_MB -down-> C_MB : "Modbus TCP — связь с контроллером"
+note on link
+  **Связь с контроллером (WAGO) по Modbus TCP.**
+  Направление: контроллер → шлюз (чтение).
+  Функция FC03 (Read Holding Registers); из регистров
+  собирается float32 (little-endian) или int16. Пока по
+  одному тегу за запрос (задел: блочное чтение смежных
+  регистров одним FC03).
+end note
 
-PROD --> KAFKA : "**Значения тегов**\n(tagId=node.id,\nmetadata{device,field,type})"
-KAFKA --> PROD : "команды записи\n(scada-commands)"
+' -- Внутри шлюза: конфиг раздаёт теги, клиенты отдают значения --
+CFG -down-> C_OPC : "список тегов Phoenix\n(адреса/типы, из кэша)"
+CFG -down-> C_MB  : "список тегов WAGO\n(адреса/типы, из кэша)"
+CFG -down-> GWDB  : "upsert тегов\nна старте"
 
-KAFKA --> MON  : "телеметрия / алармы / события"
-KAFKA --> MOB  : "scada.mobile.*"
-MON  ..> CHDB  : "резолвит канал\nпо node.id / пути"
-EDIT ..> CHDB  : "**Адреса каналов**\nсоздаёт/связывает"
-MON  --> KAFKA : "команды оператора"
+C_OPC -down-> PROD : "значения тегов → Kafka"
+C_MB  -down-> PROD : "значения тегов → Kafka"
+C_OPC ..> ALM : "значения\n(если alarms.enabled)"
+C_MB  ..> ALM : "значения\n(если alarms.enabled)"
+C_OPC -down-> GWDB : "батч телеметрии\n(если persist ВКЛ)"
+C_MB  -down-> GWDB : "батч телеметрии\n(если persist ВКЛ)"
+C_OPC ..> EVT : "смена качества тега"
+
+' -- Супервизор чинит связь с контроллерами --
+SUP ..> C_OPC : "переподнять сессию\n(тихий обрыв OPC UA)"
+note on link
+  Если > 30 с нет удачных чтений — считаем связь мёртвой,
+  помечаем DISCONNECTED и пересоздаём OPC UA-сессию.
+end note
+SUP ..> C_MB  : "проверка; Modbus\nлечится лениво сам"
+
+' -- Внутренние потоки к продюсерам --
+ALM -down-> PROD : "алармы (если включены)"
+EVT -down-> PROD : "события / журнал"
+
+' -- Шлюз ↔ шина --
+PROD -down-> KAFKA : "**Значения тегов**\n(tagId=node.id,\nmetadata{device,field,type})"
+KAFKA -up-> PROD : "команды записи\n(scada-commands)"
+
+' -- Шина → потребители --
+KAFKA -down-> MON : "телеметрия / алармы / события"
+KAFKA -down-> MOB : "scada.mobile.*"
+MON -up-> KAFKA  : "команды оператора\n(scada-commands)"
+
+' -- Реестр каналов: офлайн-источник + рантайм-резолв Монитора --
+CHDB .up.> CFG  : "ОФЛАЙН: из реестра сгенерирован\ncontrollers.yaml (tagId=node.id)"
+MON  ..> CHDB   : "РАНТАЙМ: резолвит канал\nпо node.id / пути"
+EDIT --> CHDB   : "**создаёт/связывает**\nканалы (node.id)"
+
+legend right
+  <b>Как читать диаграмму — откуда и куда идут данные</b>
+  <b>1.</b> Контроллеры (Phoenix/WAGO) ИЗМЕРЯЮТ физику и отдают значения
+      по своему протоколу. Стрелки «OPC UA» и «Modbus TCP» — это и есть
+      <b>связь с контроллером</b> (направление: контроллер → шлюз, чтение).
+  <b>2.</b> Клиенты шлюза (Milo / j2mod) забирают значения. Configuration
+      Service заранее раздаёт им список тегов (что и с каким адресом читать),
+      загруженный на старте из controllers.yaml.
+  <b>3.</b> Значения уходят в Kafka Producers → топик scada-telemetry с
+      tagId=node.id. Параллельно (по флагам) пишутся батчем в БД шлюза и
+      проверяются Alarm Engine.
+  <b>4.</b> Connection Supervisor не в потоке данных — он СТОРОЖ: следит,
+      что связь с контроллерами жива, и молча переподнимает её при обрыве.
+  <b>5.</b> Из Kafka данные читают Монитор и мобильное приложение. Монитор
+      по node.id находит канал в реестре каналов и собирает объект-прибор.
+  <b>6.</b> Реестр каналов (channel_dump.sql) — общий источник правды о
+      каналах: Редактор их создаёт, из него офлайн сгенерирован конфиг
+      шлюза и архив симулятора. У шлюза в рантайме — своя БД (scada_db).
+  <b>Пунктир</b> = офлайн/служебная связь; <b>сплошная</b> = поток данных.
+end legend
 
 @enduml
 
 @startuml SCADA-Gateway-Dataflow
 ' ============================================================================
-'  Поток данных: контроллер → шлюз → Kafka → монитор (+ авто-reconnect, алармы)
+'  Поток данных во времени: контроллер → шлюз → Kafka → монитор
+'  (+ авто-reconnect супервизором, алармы, команда оператора)
 ' ============================================================================
-title Поток данных и обработка в шлюзе
+title Поток данных и обработка в шлюзе (по шагам)
 
 skinparam shadowing false
 skinparam defaultFontName "Segoe UI"
@@ -111,51 +210,59 @@ skinparam sequence {
 }
 
 actor "Оператор" as OP
-participant "Контроллер\n(симулятор)" as PLC
+participant "Контроллер ПЛК\n(в стенде — симулятор)" as PLC
 participant "Gateway\nOPC UA / Modbus" as GW
-database "channel_dump.sql" as DB
+database "БД шлюза\nscada_db" as DB
 queue "Kafka" as K
-participant "Монитор" as MON
+participant "Монитор\n(runtime SCADA)" as MON
 
-== Инициализация ==
-GW -> DB : upsert 2471 тега из application.yaml (tagId=node.id)
-GW -> PLC : connect OPC UA :4840 + Modbus :5020
-GW -> K   : event CONNECTED (scada-events)
+== Инициализация (один раз при старте) ==
+GW -> DB : upsert 2471 тега из controllers.yaml (tagId=node.id)
+note right of GW : Теги = "что читать": адрес, тип, контроллер, уставки.
+GW -> PLC : подключиться — OPC UA :4840 и Modbus :5020
+note left of PLC : Это установка СВЯЗИ С КОНТРОЛЛЕРОМ по протоколу.
+GW -> K   : событие CONNECTED → scada-events
 
-== Опрос (цикл) ==
-loop каждый poll-цикл (родное поколение потока)
-  GW -> PLC : read value (typed / holding-регистры)
-  PLC --> GW : value + quality
-  GW -> GW  : Alarm Engine (edge-триггер по p1/p99)
-  GW -> K   : TELEMETRY {tagId, value, metadata{device,field,type}} → scada-telemetry
-  opt значение вне уставки
+== Опрос (повторяется каждый poll-цикл) ==
+loop каждый цикл опроса (в родном поколении потока)
+  GW -> PLC : прочитать значения\n(OPC UA — батчем все узлы / Modbus — регистры)
+  PLC --> GW : значение + quality (+ timestamp)
+  opt gateway.alarms.enabled = true
+    GW -> GW : Alarm Engine — edge-триггер по p1/p99
+  end
+  opt gateway.persist-telemetry = true
+    GW -> DB : накопить и записать телеметрию БАТЧем (saveAll)
+  end
+  GW -> K  : TELEMETRY {tagId=node.id, value,\nmetadata{device,field,type}} → scada-telemetry
+  opt значение вне уставки (если алармы включены)
     GW -> K : ALARM {severity, threshold, cleared} → scada-alarms
   end
 end
-K -> MON : телеметрия/алармы
-MON -> DB : резолв канала по node.id → сборка объекта-прибора
+K -> MON : телеметрия / алармы / события
+MON -> MON : резолв канала по node.id → сборка объекта-прибора,\nпроверка порогов (пороги перенесены на Монитор)
 
-== Обрыв связи и авто-восстановление ==
-PLC -> PLC : контроллер недоступен
-GW -> GW   : Supervisor: нет удачных чтений > 30 c
-GW -> K    : event DISCONNECTED (WARNING)
-loop раз в 10 c (тихо)
-  GW -> PLC : reconnect (новое поколение опроса)
+== Обрыв связи и авто-восстановление (работа супервизора) ==
+PLC -> PLC : контроллер стал недоступен
+GW -> GW   : Supervisor (раз в 10 с): нет удачных чтений > 30 c → связь мертва
+GW -> K    : событие DISCONNECTED (WARNING) → scada-events
+loop раз в 10 c, тихо (без спама в лог)
+  GW -> PLC : reconnect — новая сессия, новое поколение опроса
 end
-PLC --> GW : связь есть
-GW -> K    : event «связь восстановлена» (INFO)
+PLC --> GW : связь снова есть
+GW -> K    : событие «связь восстановлена» (INFO) → scada-events
 
-== Команда оператора ==
-OP -> MON : записать значение
+== Команда оператора (обратный путь: продукт → железо) ==
+OP -> MON : записать значение в канал
 MON -> K  : command → scada-commands
-K -> GW   : команда записи
-GW -> PLC : OPC UA write
+K -> GW   : команда записи (consumer шлюза)
+GW -> PLC : OPC UA write в узел контроллера
 GW -> K   : результат → scada-command-results
 @enduml
 
 @startuml SCADA-Gateway-Deployment
 ' ============================================================================
-'  Развёртывание: docker-compose (одна команда ./up.sh)
+'  Развёртывание: docker compose (одна команда ./up.sh)
+'  Что где физически запущено и по каким портам общается.
 ' ============================================================================
 title Развёртывание — docker compose (./up.sh)
 
@@ -173,18 +280,28 @@ skinparam queue {
   BorderColor #F9A825
   BackgroundColor #FFF8E1
 }
-
-node "Хост (Fedora, podman)" as HOST {
-  node "scada-simulator\npython:3.11\n:4840 :5020" as N_SIM
-  node "scada-gateway\ntemurin-21-jre\n:8888" as N_GW
-  queue "scada-kafka\napache/kafka KRaft\nвнутри kafka:9092\nхост localhost:9094" as N_K
-  database "scada-postgres\npostgres:16\nlocalhost:5433" as N_PG
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #FBC02D
 }
-node "Монитор / клиент\n(снаружи)" as N_MON
 
-N_SIM --> N_GW  : OPC UA + Modbus\n(SIM_HOST=simulator)
-N_GW  --> N_K   : kafka:9092
-N_GW  --> N_PG  : jdbc postgres:5432
-N_GW  --> N_MON : (через Kafka)
-N_MON --> N_K   : localhost:9094
+node "Хост (Docker Desktop / compose)" as HOST {
+  node "scada-simulator\npython:3.11\nиграет ПЛК: OPC UA :4840, Modbus :5020" as N_SIM
+  node "scada-gateway\ntemurin-21-jre\nHTTP :8888 (actuator/health)" as N_GW
+  queue "scada-kafka\napache/kafka (KRaft)\nвнутри сети kafka:9092\nна хост localhost:9094" as N_K
+  database "scada-postgres\npostgres:16 → scada_db\nна хост localhost:5433" as N_PG
+}
+node "Монитор / клиент\n(снаружи стенда)" as N_MON
+
+N_SIM --> N_GW  : связь с «контроллерами»\nOPC UA + Modbus (SIM_HOST=simulator)
+N_GW  --> N_K   : публикует телеметрию/события kafka:9092
+N_GW  --> N_PG  : своя БД jdbc postgres:5432 (scada_db)
+N_K   --> N_MON : Монитор читает топики (localhost:9094)
+N_MON --> N_K   : команды оператора (scada-commands)
+
+note bottom of HOST
+  channel_dump.sql (реестр каналов) — НЕ контейнер: это офлайн-источник
+  в корне проекта. Из него заранее сгенерированы controllers.yaml шлюза
+  и архив симулятора. В рантайме шлюз работает со своей БД scada_db.
+end note
 @enduml

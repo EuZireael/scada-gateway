@@ -13,7 +13,6 @@ import com.scada.gateway.service.EventLogService;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import jakarta.transaction.Transactional;
 
 import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
 import org.eclipse.milo.opcua.sdk.client.api.config.OpcUaClientConfig;
@@ -22,9 +21,13 @@ import org.eclipse.milo.opcua.stack.core.types.builtin.*;
 import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.UInteger;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
 import org.eclipse.milo.opcua.stack.core.types.structured.EndpointDescription;
+import org.eclipse.milo.opcua.stack.core.types.structured.ReadValueId;
+import org.eclipse.milo.opcua.stack.core.types.structured.ReadResponse;
+import org.eclipse.milo.opcua.stack.core.AttributeId;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -66,12 +69,25 @@ public class OpcUaClientServiceDB {
     private final Map<Long, Integer> readErrorStreak = new ConcurrentHashMap<>();
 
     private final Map<Long, TagEntity> tagCache = new ConcurrentHashMap<>();
+    /** Тот же набор тегов, но по имени канала (= полный путь узла) — адресация команд извне. */
+    private final Map<String, TagEntity> tagsByName = new ConcurrentHashMap<>();
 
     // Последнее качество по тегу — чтобы порождать событие при смене GOOD↔BAD.
     private final Map<Long, String> lastQualityByTag = new ConcurrentHashMap<>();
 
     // Активный эпизод аларма по тегу — для edge-триггера (не слать аларм каждый цикл).
     private final Map<Long, ActiveAlarm> activeAlarmByTag = new ConcurrentHashMap<>();
+
+    // Разобранный NodeId по его строке — чтобы не парсить строку на каждое чтение.
+    private final Map<String, NodeId> nodeIdCache = new ConcurrentHashMap<>();
+
+    // --- Флаги горячего пути (application.yaml → gateway.*) ---
+    /** Считать ли пороги/алармы в шлюзе. По умолчанию false — алармы считает Monitor. */
+    @Value("${gateway.alarms.enabled:false}")
+    private boolean alarmsEnabled;
+    /** Писать ли каждую точку в локальную БД шлюза. Значения в Kafka идут всегда. */
+    @Value("${gateway.persist-telemetry:true}")
+    private boolean persistTelemetry;
 
     /** Активный (ещё не закрытый) аларм по тегу: стабильный alarmId на весь эпизод. */
     private static final class ActiveAlarm {
@@ -151,6 +167,8 @@ public class OpcUaClientServiceDB {
         eventLogService.logSystem("INFO", "SCADA Gateway starting up", Map.of("component", "OpcUaClientService"));
 
         loadConfiguration();
+        log.info("⚙ Флаги горячего пути: alarms.enabled={}, persist-telemetry={}",
+                alarmsEnabled, persistTelemetry);
 
         List<ControllerEntity> controllers = configurationService.getAllControllers();
 
@@ -239,7 +257,12 @@ public class OpcUaClientServiceDB {
 
     private void loadConfiguration() {
         var tags = configurationService.getAllActiveTags();
-        tags.forEach(tag -> tagCache.put(tag.getId(), tag));
+        tags.forEach(tag -> {
+            tagCache.put(tag.getId(), tag);
+            if (tag.getName() != null) {
+                tagsByName.put(tag.getName(), tag);
+            }
+        });
         log.info("Loaded {} tags", tagCache.size());
         eventLogService.logSystem("INFO", "Configuration loaded", Map.of("tags", tagCache.size(), "controllers", configurationService.getAllControllers().size()));
     }
@@ -351,45 +374,62 @@ public class OpcUaClientServiceDB {
 
             while (isCurrentPoll(cid, gen)) {
                 try {
-                    List<TagEntity> tags = configurationService.getTagsForController(controller.getId());
-                    // Опрашиваем ВСЕ теги в одном цикле и спим один раз в конце,
-                    // а не после каждого тега. Иначе при N тегах период между точками
-                    // одного тега = N×pollingRate, и график выглядит редким и «скачет».
+                    List<TagEntity> allTags = configurationService.getTagsForController(cid);
+
+                    // Собираем ОДИН запрос чтения на все узлы контроллера: opcTags[i] ↔ reads[i].
+                    // Раньше читали по одному узлу (N сетевых round-trip'ов за цикл) — теперь один
+                    // read() на все теги. Это главный выигрыш по задержке для OPC UA.
+                    List<TagEntity> opcTags = new ArrayList<>();
+                    List<ReadValueId> reads = new ArrayList<>();
                     long cycleDelay = 1000L;
-                    int goodReads = 0, badReads = 0;
-                    String lastErr = null;
-
-                    for (TagEntity tag : tags) {
+                    for (TagEntity tag : allTags) {
                         if (!tag.isEnabled() || !isOpcUaTag(tag)) continue;
-
-                        try {
-                            NodeId nodeId = NodeId.parse(tag.getNodeId());
-                            DataValue dataValue = client.readValue(0, TimestampsToReturn.Both, nodeId).get();
-                            Object val = extractValue(dataValue.getValue());
-                            String quality = dataValue.getStatusCode().isGood() ? "GOOD" : "BAD";
-
-                            if (tag.isRecordDevice()) {
-                                processDeviceRecord(tag, val, quality, controller);
-                            } else {
-                                processTagValue(tag, val, quality);
-                            }
-                            goodReads++;
-
-                        } catch (Exception e) {
-                            // Пер-теговый лог НЕ пишем (спам при обрыве). Состояние связи
-                            // оценивается на уровне цикла ниже (markControllerUp/Down).
-                            badReads++;
-                            lastErr = e.getMessage();
-                            processTagValue(tag, null, "BAD");
-                        }
-
+                        NodeId nodeId = nodeIdCache.computeIfAbsent(tag.getNodeId(), NodeId::parse);
+                        opcTags.add(tag);
+                        reads.add(new ReadValueId(nodeId, AttributeId.Value.uid(), null, QualifiedName.NULL_VALUE));
                         cycleDelay = Math.min(cycleDelay, Math.max(tag.getPollingRate(), 100L));
                     }
 
-                    // Оценка связи по итогам цикла: были удачные чтения → связь есть;
-                    // совсем ничего не прочли → контроллер недоступен (супервизор поднимет).
-                    // Только текущее поколение опроса правит состояние (иначе «умирающий»
-                    // старый поток дёргает DISCONNECTED/CONNECTED — flapping).
+                    if (opcTags.isEmpty()) {
+                        Thread.sleep(cycleDelay);
+                        continue;
+                    }
+
+                    int goodReads = 0, badReads = 0;
+                    String lastErr = null;
+                    // Буфер точек цикла: одна saveAll в конце = одна транзакция вместо N коммитов.
+                    List<TelemetryEntity> batch = persistTelemetry ? new ArrayList<>(opcTags.size()) : null;
+
+                    try {
+                        ReadResponse resp = client.read(0.0, TimestampsToReturn.Both, reads).get();
+                        DataValue[] results = resp.getResults();
+                        for (int i = 0; i < opcTags.size(); i++) {
+                            TagEntity tag = opcTags.get(i);
+                            DataValue dv = (results != null && i < results.length) ? results[i] : null;
+                            Object val = dv != null ? extractValue(dv.getValue()) : null;
+                            String quality = (dv != null && dv.getStatusCode().isGood()) ? "GOOD" : "BAD";
+
+                            if (tag.isRecordDevice() && "GOOD".equals(quality)) {
+                                processDeviceRecord(tag, val, quality, controller);
+                            } else {
+                                processTagValue(tag, val, quality, batch);
+                            }
+                        }
+                        // Запрос прошёл → связь есть (пер-узловые BAD-статусы связь не роняют).
+                        goodReads = opcTags.size();
+                    } catch (Exception e) {
+                        // Обрыв на уровне запроса: весь цикл — BAD (супервизор переподнимет).
+                        lastErr = e.getMessage();
+                        badReads = opcTags.size();
+                        for (TagEntity tag : opcTags) {
+                            processTagValue(tag, null, "BAD", batch);
+                        }
+                    }
+
+                    if (batch != null && !batch.isEmpty()) flushTelemetry(batch);
+
+                    // Только текущее поколение опроса правит состояние связи (иначе flapping
+                    // от «умирающего» старого потока: DISCONNECTED/CONNECTED вперемешку).
                     if (isCurrentPoll(cid, gen)) {
                         if (goodReads > 0) markControllerUp(controller);
                         else if (badReads > 0) markControllerDown(controller,
@@ -419,10 +459,12 @@ public class OpcUaClientServiceDB {
         executor.submit(() -> {
             while (isCurrentPoll(cid, gen)) {
                 try {
-                    List<TagEntity> tags = configurationService.getTagsForController(controller.getId());
+                    List<TagEntity> tags = configurationService.getTagsForController(cid);
                     long cycleDelay = 1000L;
                     int goodReads = 0, badReads = 0;
                     String lastErr = null;
+                    // Буфер точек цикла: одна saveAll в конце = одна транзакция вместо N коммитов.
+                    List<TelemetryEntity> batch = persistTelemetry ? new ArrayList<>() : null;
 
                     for (TagEntity tag : tags) {
                         if (!tag.isEnabled() || !isModbusTag(tag)) continue;
@@ -453,17 +495,19 @@ public class OpcUaClientServiceDB {
 
                             String quality = value != null ? "GOOD" : "BAD";
                             if (value != null) goodReads++; else badReads++;
-                            processTagValue(tag, value, quality);
+                            processTagValue(tag, value, quality, batch);
 
                         } catch (Exception e) {
                             // Пер-теговый лог не пишем; состояние связи — на уровне цикла.
                             badReads++;
                             lastErr = e.getMessage();
-                            processTagValue(tag, null, "BAD");
+                            processTagValue(tag, null, "BAD", batch);
                         }
 
                         cycleDelay = Math.min(cycleDelay, Math.max(tag.getPollingRate(), 100L));
                     }
+
+                    if (batch != null && !batch.isEmpty()) flushTelemetry(batch);
 
                     // Оценка связи по итогам цикла (Modbus само-восстанавливается лениво).
                     if (isCurrentPoll(cid, gen)) {
@@ -486,7 +530,8 @@ public class OpcUaClientServiceDB {
     }
 
     private boolean isOpcUaTag(TagEntity tag) {
-        return "OPCUA".equalsIgnoreCase(tag.getProtocol()) || 
+        if ("modbus".equalsIgnoreCase(tag.getProtocol())) return false;
+        return "OPCUA".equalsIgnoreCase(tag.getProtocol()) ||
                (tag.getNodeId() != null && !tag.getNodeId().isEmpty());
     }
 
@@ -548,10 +593,9 @@ public class OpcUaClientServiceDB {
         }
     }
 
-    @Transactional
-    private void processTagValue(TagEntity tag, Object value, String quality) {
-        // Чтение тега НЕ логируем в event_log на каждый опрос (это был шум:
-        // строка в БД на каждую точку). Значения идут в telemetry + Kafka;
+    private void processTagValue(TagEntity tag, Object value, String quality, List<TelemetryEntity> batch) {
+        // Чтение тега НЕ логируем в event_log на каждый опрос. Значения идут в Kafka
+        // (и, если включён persist-telemetry, в локальную БД батчем в конце цикла);
         // в журнал событий пишем только смену качества и ошибки.
 
         // Событие при смене качества сигнала (GOOD↔BAD) — попадает в журнал событий.
@@ -567,13 +611,16 @@ public class OpcUaClientServiceDB {
                     String.format("Quality changed for %s: %s → %s", tag.getName(), prevQuality, quality),
                     details);
         }
-        
-        // Проверка на алармы (edge-триггер, см. evaluateAlarms).
-        if (value instanceof Number) {
+
+        // Пороги/алармы — только если включены флагом (по умолчанию их считает Monitor).
+        if (alarmsEnabled && value instanceof Number) {
             evaluateAlarms(tag, ((Number) value).doubleValue());
         }
 
-        saveTelemetry(tag, value, quality);
+        // Локальная история: копим в буфер цикла (batch != null ⇔ persist-telemetry=true).
+        if (batch != null) {
+            batch.add(buildTelemetry(tag, value, quality));
+        }
 
         if (value != null) {
             telemetryProducer.sendTelemetry(tag, value, quality);
@@ -708,6 +755,19 @@ public class OpcUaClientServiceDB {
         }
     }
 
+    /**
+     * Запись значения по ИМЕНИ канала (полному пути узла). Так тег адресует
+     * scada-editor runtime: имя канала — это и Kafka-key телеметрии, и tag_id
+     * в редакторе, поэтому внешнему монитору не нужна нумерация тегов шлюза.
+     */
+    public CommandOutcome writeTagByName(String tagName, Object value, String dataType) {
+        TagEntity tag = tagName == null ? null : tagsByName.get(tagName);
+        if (tag == null) {
+            return new CommandOutcome(false, "REJECTED", "Тег не найден по имени: " + tagName, null);
+        }
+        return writeTag(tag.getId(), value, dataType);
+    }
+
     /** Конвертация значения команды в OPC UA Variant нужного типа. */
     private Variant toVariant(String dataType, Object value) {
         String dt = dataType == null ? "" : dataType.trim().toUpperCase();
@@ -754,25 +814,29 @@ public class OpcUaClientServiceDB {
         }
     }
 
-    private void saveTelemetry(TagEntity tag, Object value, String quality) {
+    /** Собрать (не сохраняя) сущность телеметрии для батч-вставки. */
+    private TelemetryEntity buildTelemetry(TagEntity tag, Object value, String quality) {
+        TelemetryEntity t = new TelemetryEntity();
+        t.setTagId(tag.getId());
+        t.setTime(Instant.now());
+        t.setQuality(quality);
+        if (value instanceof Number) {
+            t.setValue(((Number) value).doubleValue());
+        } else if (value instanceof Boolean) {
+            t.setValue(((Boolean) value) ? 1.0 : 0.0);
+        } else if (value != null) {
+            t.setValueString(value.toString());
+        }
+        return t;
+    }
+
+    /** Батч-запись точек цикла: saveAll = ОДНА транзакция вместо N отдельных коммитов. */
+    private void flushTelemetry(List<TelemetryEntity> batch) {
         try {
-            TelemetryEntity t = new TelemetryEntity();
-            t.setTagId(tag.getId());
-            t.setTime(Instant.now());
-            t.setQuality(quality);
-
-            if (value instanceof Number) {
-                t.setValue(((Number) value).doubleValue());
-            } else if (value instanceof Boolean) {
-                t.setValue(((Boolean) value) ? 1.0 : 0.0);
-            } else if (value != null) {
-                t.setValueString(value.toString());
-            }
-
-            telemetryRepository.save(t);
+            telemetryRepository.saveAll(batch);
         } catch (Exception e) {
-            log.error("DB save error: {}", e.getMessage());
-            eventLogService.logError("Database", "Failed to save telemetry for tag " + tag.getName(), e, tag, null);
+            log.error("DB batch save error ({} точек): {}", batch.size(), e.getMessage());
+            eventLogService.logError("Database", "Failed to batch-save telemetry", e, null, null);
         }
     }
 

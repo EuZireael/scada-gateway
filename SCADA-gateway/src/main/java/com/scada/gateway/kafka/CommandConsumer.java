@@ -43,15 +43,22 @@ public class CommandConsumer {
             containerFactory = "commandKafkaListenerContainerFactory"
     )
     public void onCommand(CommandMessage cmd) {
-        if (cmd == null || cmd.getTagId() == null) {
-            log.warn("Получена пустая команда, пропускаем");
+        // Тег адресуется либо внутренним id (Monitor Srv), либо именем канала —
+        // полным путём узла (scada-editor runtime). Имя самодостаточно: оно же
+        // Kafka-key телеметрии, поэтому отправителю не нужно знать нумерацию шлюза.
+        boolean hasId   = cmd != null && cmd.getTagId() != null;
+        boolean hasName = cmd != null && cmd.getTagName() != null && !cmd.getTagName().isBlank();
+        if (!hasId && !hasName) {
+            log.warn("Получена команда без tagId и tagName, пропускаем");
             return;
         }
 
         log.info("← команда: tag={} ({}), value={}, by={}",
                 cmd.getTagName(), cmd.getTagId(), cmd.getValue(), cmd.getRequestedBy());
 
-        CommandOutcome outcome = opcUaClientService.writeTag(cmd.getTagId(), cmd.getValue(), cmd.getDataType());
+        CommandOutcome outcome = hasId
+                ? opcUaClientService.writeTag(cmd.getTagId(), cmd.getValue(), cmd.getDataType())
+                : opcUaClientService.writeTagByName(cmd.getTagName(), cmd.getValue(), cmd.getDataType());
 
         CommandResultMessage result = new CommandResultMessage();
         result.setCommandId(cmd.getCommandId());
