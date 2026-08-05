@@ -10,7 +10,9 @@ public class CommandResultMessage {
     private String commandId;
     private Long tagId;
     private String tagName;
-    private String status;      // APPLIED | REJECTED | FAILED
+    private String status;      // APPLIED | REJECTED_UNKNOWN_TAG | REJECTED_NOT_WRITABLE |
+                                // REJECTED_TYPE_MISMATCH | REJECTED_PROTOCOL_UNSUPPORTED |
+                                // FAILED_NO_CONNECTION | FAILED_WRITE (A5)
     private boolean success;
     private String message;
     private Object appliedValue;

@@ -12,7 +12,9 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -28,6 +30,18 @@ public class CommandConsumer {
     private final OpcUaClientServiceDB opcUaClientService;
     private final CommandResultProducer resultProducer;
     private final EventLogService eventLogService;
+
+    // A7: окно недавних commandId для идемпотентности — Kafka at-least-once или двойная
+    // доставка одной команды не должна писать в ПЛК дважды. Держим до DEDUP_MAX последних
+    // id с TTL DEDUP_TTL_MS (команд единицы/мин — контеншена на synchronized-map нет).
+    private static final int DEDUP_MAX = 1000;
+    private static final long DEDUP_TTL_MS = 60_000;
+    private final Map<String, Long> recentCommands = Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, false) {
+                @Override protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
+                    return size() > DEDUP_MAX;
+                }
+            });
 
     public CommandConsumer(OpcUaClientServiceDB opcUaClientService,
                            CommandResultProducer resultProducer,
@@ -53,6 +67,12 @@ public class CommandConsumer {
             return;
         }
 
+        // A7: дубль (повторная доставка того же commandId) — не пишем в ПЛК ещё раз.
+        if (isDuplicate(cmd.getCommandId())) {
+            log.warn("⏭ Команда {} уже обработана недавно — пропуск (идемпотентность)", cmd.getCommandId());
+            return;
+        }
+
         log.info("← команда: tag={} ({}), value={}, by={}",
                 cmd.getTagName(), cmd.getTagId(), cmd.getValue(), cmd.getRequestedBy());
 
@@ -64,7 +84,7 @@ public class CommandConsumer {
         result.setCommandId(cmd.getCommandId());
         result.setTagId(cmd.getTagId());
         result.setTagName(cmd.getTagName());
-        result.setStatus(outcome.status);
+        result.setStatus(outcome.status.name());
         result.setSuccess(outcome.success);
         result.setMessage(outcome.message);
         result.setAppliedValue(outcome.appliedValue);
@@ -75,11 +95,23 @@ public class CommandConsumer {
         details.put("tagId", cmd.getTagId());
         details.put("value", String.valueOf(cmd.getValue()));
         details.put("requestedBy", cmd.getRequestedBy());
-        details.put("status", outcome.status);
+        details.put("status", outcome.status.name());
         eventLogService.logEvent("COMMAND", "CommandConsumer",
                 outcome.success ? "INFO" : "WARNING",
                 String.format("Команда %s = %s от %s: %s",
                         cmd.getTagName(), cmd.getValue(), cmd.getRequestedBy(), outcome.status),
                 details);
+    }
+
+    /** true, если commandId уже применялся в пределах TTL (дубль). Иначе запоминает его. */
+    private boolean isDuplicate(String commandId) {
+        if (commandId == null || commandId.isBlank()) return false;
+        long now = System.currentTimeMillis();
+        Long prev = recentCommands.get(commandId);
+        if (prev != null && now - prev < DEDUP_TTL_MS) {
+            return true;
+        }
+        recentCommands.put(commandId, now);
+        return false;
     }
 }
