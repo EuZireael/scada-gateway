@@ -409,11 +409,14 @@ public class OpcUaClientServiceDB {
                             DataValue dv = (results != null && i < results.length) ? results[i] : null;
                             Object val = dv != null ? extractValue(dv.getValue()) : null;
                             String quality = (dv != null && dv.getStatusCode().isGood()) ? "GOOD" : "BAD";
+                            // A2: метка времени = момент снятия значения сервером (sourceTime),
+                            // а не момент отправки. Фолбэк serverTime → now.
+                            Instant ts = sourceTimeOf(dv);
 
                             if (tag.isRecordDevice() && "GOOD".equals(quality)) {
-                                processDeviceRecord(tag, val, quality, controller);
+                                processDeviceRecord(tag, val, quality, ts, controller);
                             } else {
-                                processTagValue(tag, val, quality, batch);
+                                processTagValue(tag, val, quality, ts, batch);
                             }
                         }
                         // Запрос прошёл → связь есть (пер-узловые BAD-статусы связь не роняют).
@@ -422,8 +425,9 @@ public class OpcUaClientServiceDB {
                         // Обрыв на уровне запроса: весь цикл — BAD (супервизор переподнимет).
                         lastErr = e.getMessage();
                         badReads = opcTags.size();
+                        Instant ts = Instant.now();
                         for (TagEntity tag : opcTags) {
-                            processTagValue(tag, null, "BAD", batch);
+                            processTagValue(tag, null, "BAD", ts, batch);
                         }
                     }
 
@@ -496,13 +500,15 @@ public class OpcUaClientServiceDB {
 
                             String quality = value != null ? "GOOD" : "BAD";
                             if (value != null) goodReads++; else badReads++;
-                            processTagValue(tag, value, quality, batch);
+                            // A2: у Modbus источника времени в протоколе нет — ставим момент
+                            // завершения чтения регистра, не момент отправки в Kafka.
+                            processTagValue(tag, value, quality, Instant.now(), batch);
 
                         } catch (Exception e) {
                             // Пер-теговый лог не пишем; состояние связи — на уровне цикла.
                             badReads++;
                             lastErr = e.getMessage();
-                            processTagValue(tag, null, "BAD", batch);
+                            processTagValue(tag, null, "BAD", Instant.now(), batch);
                         }
 
                         cycleDelay = Math.min(cycleDelay, Math.max(tag.getPollingRate(), 100L));
@@ -551,7 +557,7 @@ public class OpcUaClientServiceDB {
      *   3) приводит значение к типу и шлёт КАЖДОЕ поле в Kafka отдельным каналом
      *      (tagId = node.id), device/field/type — в metadata.
      */
-    private void processDeviceRecord(TagEntity tag, Object record, String quality, ControllerEntity controller) {
+    private void processDeviceRecord(TagEntity tag, Object record, String quality, Instant timestamp, ControllerEntity controller) {
         if (record == null || tag.getFieldsJson() == null) return;
         String s = record.toString();
         int lb = s.indexOf('{'), rb = s.lastIndexOf('}');
@@ -587,11 +593,11 @@ public class OpcUaClientServiceDB {
                 continue;
             }
             String channelName = tag.getDeviceName() + "." + field;
-            telemetryProducer.sendFieldTelemetry(channelName, value, quality);
+            telemetryProducer.sendFieldTelemetry(channelName, value, quality, timestamp);
         }
     }
 
-    private void processTagValue(TagEntity tag, Object value, String quality, List<TelemetryEntity> batch) {
+    private void processTagValue(TagEntity tag, Object value, String quality, Instant timestamp, List<TelemetryEntity> batch) {
         // Чтение тега НЕ логируем в event_log на каждый опрос. Значения идут в Kafka
         // (и, если включён persist-telemetry, в локальную БД батчем в конце цикла);
         // в журнал событий пишем только смену качества и ошибки.
@@ -617,11 +623,11 @@ public class OpcUaClientServiceDB {
 
         // Локальная история: копим в буфер цикла (batch != null ⇔ persist-telemetry=true).
         if (batch != null) {
-            batch.add(buildTelemetry(tag, value, quality));
+            batch.add(buildTelemetry(tag, value, quality, timestamp));
         }
 
         if (value != null) {
-            telemetryProducer.sendTelemetry(tag, value, quality);
+            telemetryProducer.sendTelemetry(tag, value, quality, timestamp);
             // per-tag на каждый опрос — только debug (иначе поток INFO на 2471 тег/цикл).
             log.debug("📊 {} = {}", tag.getName(), value);
         } else {
@@ -858,10 +864,21 @@ public class OpcUaClientServiceDB {
     }
 
     /** Собрать (не сохраняя) сущность телеметрии для батч-вставки. */
-    private TelemetryEntity buildTelemetry(TagEntity tag, Object value, String quality) {
+    /** Момент снятия значения: sourceTime сервера, иначе serverTime, иначе now (A2). */
+    private Instant sourceTimeOf(DataValue dv) {
+        if (dv != null) {
+            DateTime src = dv.getSourceTime();
+            if (src != null && !src.isNull()) return src.getJavaInstant();
+            DateTime srv = dv.getServerTime();
+            if (srv != null && !srv.isNull()) return srv.getJavaInstant();
+        }
+        return Instant.now();
+    }
+
+    private TelemetryEntity buildTelemetry(TagEntity tag, Object value, String quality, Instant timestamp) {
         TelemetryEntity t = new TelemetryEntity();
         t.setTagId(tag.getId());
-        t.setTime(Instant.now());
+        t.setTime(timestamp);
         t.setQuality(quality);
         if (value instanceof Number) {
             t.setValue(((Number) value).doubleValue());

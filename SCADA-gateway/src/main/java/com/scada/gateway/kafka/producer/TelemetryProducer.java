@@ -33,7 +33,7 @@ public class TelemetryProducer {
         this.eventLogService = eventLogService;
     }
 
-    public void sendTelemetry(TagEntity tag, Object value, String quality) {
+    public void sendTelemetry(TagEntity tag, Object value, String quality, Instant timestamp) {
         if (!kafkaEnabled) {
             log.debug("Kafka disabled, skipping send for tag: {}", tag.getName());
             return;
@@ -46,7 +46,7 @@ public class TelemetryProducer {
             // построится. Адрес тега несёт Kafka-key (= tag.getName() = путь узла);
             // всё статическое (единицы, прибор, контроллер) Monitor берёт из своего
             // конфига по ключу, на проводе его нет.
-            TelemetryMessage message = new TelemetryMessage(value, quality, Instant.now());
+            TelemetryMessage message = new TelemetryMessage(value, quality, timestamp);
 
             CompletableFuture<SendResult<String, Object>> future =
                 kafkaTemplate.send(telemetryTopic, tag.getName(), message);
@@ -72,10 +72,10 @@ public class TelemetryProducer {
      * Отправка ОДНОГО ПОЛЯ разобранной записи прибора (режим шлюз-драйвер).
      * channelName = путь канала (id_node) = Kafka-key; тело — тот же триплет.
      */
-    public void sendFieldTelemetry(String channelName, Object value, String quality) {
+    public void sendFieldTelemetry(String channelName, Object value, String quality, Instant timestamp) {
         if (!kafkaEnabled) return;
         try {
-            TelemetryMessage message = new TelemetryMessage(value, quality, Instant.now());
+            TelemetryMessage message = new TelemetryMessage(value, quality, timestamp);
             kafkaTemplate.send(telemetryTopic, channelName, message)
                 .whenComplete((result, ex) -> {
                     if (ex != null) {
