@@ -572,7 +572,6 @@ public class OpcUaClientServiceDB {
             log.error("fieldsJson прибора {} не разобран: {}", tag.getDeviceName(), e.getMessage());
             return;
         }
-        Long ctrlId = controller != null ? controller.getId() : null;
         for (Map<String, Object> f : fields) {
             String field = (String) f.get("name");
             String raw = parsed.get(field);
@@ -586,10 +585,8 @@ public class OpcUaClientServiceDB {
             } catch (NumberFormatException nfe) {
                 continue;
             }
-            Long channelId = f.get("channelId") == null ? null : ((Number) f.get("channelId")).longValue();
             String channelName = tag.getDeviceName() + "." + field;
-            telemetryProducer.sendFieldTelemetry(channelId, channelName, value, quality,
-                    tag.getDeviceName(), field, tag.getDeviceType(), ctrlId);
+            telemetryProducer.sendFieldTelemetry(channelName, value, quality);
         }
     }
 
