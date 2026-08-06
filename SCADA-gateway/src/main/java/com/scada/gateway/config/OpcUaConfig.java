@@ -80,6 +80,10 @@ public class OpcUaConfig {
         private String modbusType;               // "float32" | "int16" | "int32"
         private Integer modbusUnitId = 1;        // Modbus slave id
 
+        // Доступ к записи точки: false (по умолчанию) = только чтение (датчик), true =
+        // актуатор (клапан/мотор/DO), команду записи шлюз принимает. См. writeTag.
+        private boolean writable = false;
+
         public String getNodeId() { return nodeId; }
         public void setNodeId(String nodeId) { this.nodeId = nodeId; }
 
@@ -133,6 +137,9 @@ public class OpcUaConfig {
 
         public Integer getModbusUnitId() { return modbusUnitId; }
         public void setModbusUnitId(Integer modbusUnitId) { this.modbusUnitId = modbusUnitId; }
+
+        public boolean isWritable() { return writable; }
+        public void setWritable(boolean writable) { this.writable = writable; }
     }
 
     /** Одно поле прибора внутри записи ИМЯ={поле=знач,…}: имя → канал базы + тип. */

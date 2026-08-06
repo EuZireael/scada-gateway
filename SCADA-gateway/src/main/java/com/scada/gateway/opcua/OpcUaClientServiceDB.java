@@ -735,6 +735,15 @@ public class OpcUaClientServiceDB {
         if (tag == null) {
             return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "Тег не найден: " + tagId, null);
         }
+        // Доступ к записи — как у реального ПЛК: показание датчика (давление, расход)
+        // изменить нельзя, только команду актуатора (клапан/мотор/DO). Отклоняем ДО
+        // похода в контроллер: для OPC UA это экономит round-trip до Bad_NotWritable,
+        // для Modbus — ЕДИНСТВЕННАЯ защита (у holding-регистра нет признака «только
+        // чтение», без этой проверки регистр датчика молча перезапишется).
+        if (!tag.isWritable()) {
+            return new CommandOutcome(false, CommandStatus.REJECTED_NOT_WRITABLE,
+                    "Тег только для чтения (датчик), запись запрещена: " + tag.getName(), null);
+        }
         // Маршрутизация по протоколу — деталь реализации шлюза, наружу не торчит (A6).
         // Запись реализована для OPC UA и Modbus; иной протокол → PROTOCOL_UNSUPPORTED.
         if (isOpcUaTag(tag)) {
