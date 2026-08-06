@@ -88,8 +88,10 @@ kafka:
   publish:
     events: true
     alarms: true
+  # Телеметрия идёт в топик, который СЛУШАЕТ монитор (runtime: KafkaProperties.tagsTopic
+  # = scada.tags, TagKafkaConsumer.subscribe). Имя топика — единая точка стыка шлюз↔монитор.
   topics:
-    telemetry: scada-telemetry
+    telemetry: scada.tags
     alarms: scada-alarms
     events: scada-events
     commands: scada-commands

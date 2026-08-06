@@ -133,6 +133,8 @@ public class ConfigurationService {
                 tag.setModbusAddress(tagConfig.getModbusAddress());
                 tag.setModbusType(tagConfig.getModbusType());
                 tag.setModbusUnitId(tagConfig.getModbusUnitId());
+                // Доступ к записи (RW актуатор / RO датчик) — enforce'ит writeTag.
+                tag.setWritable(tagConfig.isWritable());
 
                 tagRepository.save(tag);
             }

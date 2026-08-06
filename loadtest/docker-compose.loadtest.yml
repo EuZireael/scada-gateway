@@ -1,0 +1,34 @@
+# ============================================================================
+# Override для нагрузочного теста. Подменяет конфиги в работающих образах БЕЗ
+# пересборки: генератор пишет пару в loadtest/generated/, а мы монтируем её внутрь.
+#
+# Запуск (из корня репозитория, это делает run.py):
+#   docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml up -d
+#
+#   simulator — вместо replay_config.yaml грузим сгенерированный loadtest.yaml
+#   gateway   — SPRING_CONFIG_IMPORT=file:… переопределяет classpath:controllers.yaml
+#               (env заменяет свойство целиком → грузятся ТОЛЬКО нагрузочные теги,
+#                а не встроенные 2471; при отсутствии env всё работает как раньше).
+# ============================================================================
+services:
+
+  # ВАЖНО (Fedora/SELinux Enforcing + podman): метка :Z обязательна, иначе контейнер
+  # не сможет прочитать смонтированный файл и шлюз молча возьмёт встроенные 2471 тега.
+  simulator:
+    command: ["python", "simulator.py", "config/loadtest.yaml"]
+    volumes:
+      - ./loadtest/generated/sim.yaml:/app/config/loadtest.yaml:ro,Z
+
+  gateway:
+    environment:
+      SPRING_CONFIG_IMPORT: "file:/config/controllers.yaml"
+      # Флаги шлюза читаются через @Value("${gateway.persist-telemetry}") — это НЕ
+      # relaxed binding @ConfigurationProperties. Плейсхолдер резолвится через
+      # SystemEnvironmentPropertySource, который '.' и '-' меняет на '_' → корректное
+      # env-имя = GATEWAY_PERSIST_TELEMETRY. persist=OFF изолирует Kafka от Postgres:
+      # иначе шлюз каждый цикл синхронно пишет saveAll(N) в БД — это тормоз, не throughput.
+      GATEWAY_PERSIST_TELEMETRY: "${LT_PERSIST_TELEMETRY:-false}"
+      # Алармы считает Monitor; в шлюзе на нагрузке они только жгут CPU/поток опроса и БД.
+      GATEWAY_ALARMS_ENABLED: "false"
+    volumes:
+      - ./loadtest/generated/controllers.yaml:/config/controllers.yaml:ro,Z

@@ -52,7 +52,7 @@ $COMPOSE up -d --build
 echo
 echo "✅ Стек поднят. Порты на хост:"
 echo "   gateway  http://localhost:8888/actuator/health"
-echo "   kafka    localhost:9094   (топики: scada-telemetry / scada-events / scada-alarms)"
+echo "   kafka    localhost:9094   (топики: scada.tags [телеметрия, слушает монитор] / scada-events / scada-alarms)"
 echo "   postgres localhost:5433   (scada_db / scada_user)"
 echo
 echo "   Логи шлюза:   $COMPOSE logs -f gateway"

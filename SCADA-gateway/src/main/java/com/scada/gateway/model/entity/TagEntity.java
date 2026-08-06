@@ -88,6 +88,13 @@ public class TagEntity {
     @Column(name = "fields_json", columnDefinition = "text")
     private String fieldsJson;
 
+    // Доступ к записи — как у реального ПЛК: показание датчика (RO) изменить нельзя,
+    // команду актуатора (RW: клапан/мотор/DO) — можно. false (по умолчанию) → шлюз
+    // отклоняет команду записи (REJECTED_NOT_WRITABLE) ещё ДО похода в контроллер,
+    // для ОБОИХ протоколов. Источник — writable в controllers.yaml.
+    @Column(name = "writable")
+    private boolean writable = false;
+
     // ==========================================
     
     @Transient
@@ -182,6 +189,9 @@ public class TagEntity {
 
     public String getFieldsJson() { return fieldsJson; }
     public void setFieldsJson(String fieldsJson) { this.fieldsJson = fieldsJson; }
+
+    public boolean isWritable() { return writable; }
+    public void setWritable(boolean writable) { this.writable = writable; }
 
     // ==========================================
     
