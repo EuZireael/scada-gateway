@@ -36,3 +36,6 @@ logs/
 *.bak.*
 loadtest/generated/
 loadtest/metrics/
+
+# ---- Лог чата Claude (личное, НЕ коммитить) ----
+claude-chat-*.jsonl
