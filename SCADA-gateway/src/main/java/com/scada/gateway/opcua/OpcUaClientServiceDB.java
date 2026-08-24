@@ -327,8 +327,11 @@ public class OpcUaClientServiceDB {
                             .get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS);
 
             if (endpoints.isEmpty()) {
-                if (verbose) log.warn("No endpoints found for {}", controller.getEndpoint());
-                return;
+                // Пустой список = сервер недоступен/не ответил (getEndpoints НЕ бросает при
+                // отказе — возвращает пусто). Раньше тут был тихий return, и провал
+                // переподключения шёл МИМО учёта (CONNECT_FAILED не писался). Бросаем —
+                // пусть неудача попадёт в единый catch (счётчик + событие в event_log).
+                throw new IllegalStateException("OPC UA discovery вернул пустой список endpoint (сервер недоступен?)");
             }
 
             EndpointDescription endpoint = endpoints.get(0);
