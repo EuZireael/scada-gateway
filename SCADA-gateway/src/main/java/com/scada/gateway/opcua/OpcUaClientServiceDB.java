@@ -68,6 +68,9 @@ public class OpcUaClientServiceDB {
     private final Map<Long, ControllerEntity> controllerById = new ConcurrentHashMap<>();
     /** Считаем ошибки чтения подряд — чтобы не спамить лог (троттлинг). */
     private final Map<Long, Integer> readErrorStreak = new ConcurrentHashMap<>();
+    /** Считаем НЕудачные попытки ПОДКЛЮЧЕНИЯ подряд — чтобы фиксировать «не могу
+     *  подключиться» в event_log (иначе из БД не отличить «ещё не успел» от «висит давно»). */
+    private final Map<Long, Integer> connectFailStreak = new ConcurrentHashMap<>();
 
     private final Map<Long, TagEntity> tagCache = new ConcurrentHashMap<>();
     /** Тот же набор тегов, но по имени канала (= полный путь узла) — адресация команд извне. */
@@ -96,6 +99,13 @@ public class OpcUaClientServiceDB {
      */
     @Value("${gateway.send-bad-frames:false}")
     private boolean sendBadFrames;
+    /**
+     * Таймаут блокирующих OPC UA-вызовов (discovery / connect / write). БЕЗ него
+     * зависший handshake вешает вызывающий поток НАВСЕГДА — поток супервизора при
+     * подключении и поток консьюмера при записи. См. gateway-opcua-write-issue.md.
+     */
+    @Value("${gateway.opcua-op-timeout-ms:5000}")
+    private long opcuaOpTimeoutMs;
 
     /** Активный (ещё не закрытый) аларм по тегу: стабильный alarmId на весь эпизод. */
     private static final class ActiveAlarm {
@@ -301,6 +311,7 @@ public class OpcUaClientServiceDB {
      * удачному чтению — единый владелец перехода «связь есть», без дублей.
      */
     private void connectOpcUaController(ControllerEntity controller, boolean verbose) {
+        OpcUaClient client = null;
         try {
             if (verbose) {
                 log.info("🔌 Connecting OPC UA: {} at {}", controller.getName(), controller.getEndpoint());
@@ -309,8 +320,11 @@ public class OpcUaClientServiceDB {
                 log.debug("🔄 Reconnecting OPC UA: {}", controller.getName());
             }
 
+            // Таймаут ОБЯЗАТЕЛЕН: без него зависший OPC UA-handshake (TCP отвечает, а
+            // сам протокол — нет) вешает этот поток навсегда (gateway-opcua-write-issue.md).
             List<EndpointDescription> endpoints =
-                    DiscoveryClient.getEndpoints(controller.getEndpoint()).get();
+                    DiscoveryClient.getEndpoints(controller.getEndpoint())
+                            .get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS);
 
             if (endpoints.isEmpty()) {
                 if (verbose) log.warn("No endpoints found for {}", controller.getEndpoint());
@@ -325,11 +339,12 @@ public class OpcUaClientServiceDB {
                     .setEndpoint(endpoint)
                     .build();
 
-            OpcUaClient client = OpcUaClient.create(config);
-            client.connect().get();
+            client = OpcUaClient.create(config);
+            client.connect().get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS);
 
             opcClients.put(controller.getId(), client);
             runningStatus.put(controller.getId(), true);
+            connectFailStreak.remove(controller.getId()); // успех — сбрасываем счётчик неудач
             // Отмечаем момент как «свежий», чтобы супервизор не счёл связь stale в
             // окне между установкой сокета и первым удачным чтением (иначе — цикл
             // переподключений, рвущий только что поднятую сессию).
@@ -341,13 +356,24 @@ public class OpcUaClientServiceDB {
             // CONNECTED-событие эмитит markControllerUp по первому удачному чтению.
 
         } catch (Exception e) {
-            // Без стектрейса: супервизор повторяет каждые 10 c, факт обрыва уже
-            // зафиксирован markControllerDown (DISCONNECTED) с троттлингом.
-            String msg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
+            // Таймаут/ошибка: клиент мог подняться частично — закрываем, чтобы не течь.
+            if (client != null) {
+                try { client.disconnect().get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS); } catch (Exception ignore) {}
+            }
+            String msg = e instanceof TimeoutException
+                    ? "таймаут " + opcuaOpTimeoutMs + " мс (handshake завис)"
+                    : (e.getCause() != null ? e.getCause().getMessage() : e.getMessage());
+            // Видимость в БД: первую неудачу и далее раз в ~минуту фиксируем в event_log —
+            // иначе из журнала не отличить «ещё подключается» от «висит уже давно».
+            int fails = connectFailStreak.merge(controller.getId(), 1, Integer::sum);
+            if (fails == 1 || fails % 6 == 0) {
+                eventLogService.logConnection(controller, "CONNECT_FAILED",
+                        "попыток подряд: " + fails + (msg != null ? " — " + msg : ""));
+            }
             if (verbose) {
-                log.warn("❌ OPC UA connect failed for {}: {}", controller.getName(), msg);
+                log.warn("❌ OPC UA connect failed for {}: {} (попытка {})", controller.getName(), msg, fails);
             } else {
-                log.debug("OPC UA reconnect attempt failed for {}: {}", controller.getName(), msg);
+                log.debug("OPC UA reconnect attempt failed for {}: {} (попытка {})", controller.getName(), msg, fails);
             }
         }
     }
@@ -378,6 +404,11 @@ public class OpcUaClientServiceDB {
     private void startOpcuaPolling(ControllerEntity controller, ExecutorService executor, long gen) {
         final Long cid = controller.getId();
         executor.submit(() -> {
+            // ИНВАРИАНТ: клиента берём ОДИН раз. opcClients меняется только вместе с
+            // перезапуском опроса (reconnectOpcUa: bump поколения + shutdownNow ЭТОГО
+            // потока), поэтому к моменту подмены поток уже мёртв (isCurrentPoll=false) и
+            // до нового клиента не доберётся. writeOpcUa берёт клиента из карты заново —
+            // это ок. НЕ менять opcClients в обход reconnectOpcUa, иначе чтение/запись разъедутся.
             OpcUaClient client = opcClients.get(cid);
 
             while (isCurrentPoll(cid, gen)) {
@@ -782,7 +813,8 @@ public class OpcUaClientServiceDB {
         try {
             // status/time = null: их проставляет сервер (канон milo для записи).
             DataValue dataValue = new DataValue(variant, null, null);
-            StatusCode status = client.writeValue(nodeId, dataValue).get();
+            // Таймаут: без него зависшая запись вешает поток консьюмера команд навсегда.
+            StatusCode status = client.writeValue(nodeId, dataValue).get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS);
 
             if (status.isGood()) {
                 log.info("✍ OPC UA записано {} = {} (tag {})", tag.getName(), variant.getValue(), tag.getId());

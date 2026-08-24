@@ -9,6 +9,14 @@ spring:
     import: classpath:controllers.yaml
   application:
     name: scada-gateway
+
+  # Пул планировщика @Scheduled. Дефолт Spring Boot = 1 поток: один зависший
+  # супервизор заморозил бы ВСЕ периодические задачи (супервизор + сводка здоровья).
+  # 3 потока — задачи идут независимо. (См. gateway-opcua-write-issue.md, фикс №2.)
+  task:
+    scheduling:
+      pool:
+        size: 3
   
   datasource:
     url: jdbc:postgresql://localhost:5433/scada_db
@@ -113,6 +121,10 @@ gateway:
   # (B2: рендер «нет данных») null «уверенно закроет клапан». Включать ТОЛЬКО когда
   # обе стороны готовы — тогда оператор увидит потерю связи, а не замерший тег.
   send-bad-frames: false
+  # Таймаут блокирующих OPC UA-вызовов (discovery / connect / write). Без него
+  # зависший handshake вешает поток супервизора/консьюмера НАВСЕГДА. 5 c → быстро
+  # падаем и ретраим на следующем цикле супервизора; неудача видна в event_log.
+  opcua-op-timeout-ms: 5000
 
 logging:
   level:
