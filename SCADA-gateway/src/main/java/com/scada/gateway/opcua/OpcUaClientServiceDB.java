@@ -8,6 +8,8 @@ import com.scada.gateway.service.ConfigurationService;
 import com.scada.gateway.repository.TelemetryRepository;
 import com.scada.gateway.kafka.producer.TelemetryProducer;
 import com.scada.gateway.kafka.producer.AlarmProducer;
+import com.scada.gateway.command.CommandOutcome;
+import com.scada.gateway.command.CommandStatus;
 import com.scada.gateway.modbus.ModbusClientService;
 import com.scada.gateway.modbus.ModbusEndpoint;
 import com.scada.gateway.service.EventLogService;
@@ -925,36 +927,6 @@ public class OpcUaClientServiceDB {
             return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "Тег не найден по имени: " + tagName, null);
         }
         return writeTag(tag.getId(), value, dataType);
-    }
-
-    /**
-     * Фиксированный перечень исходов команды записи (A5). Даёт оператору различить
-     * ошибку конфигурации («канала нет») от эксплуатационной («нет связи») без
-     * парсинга текста message. На провод уходит .name().
-     */
-    public enum CommandStatus {
-        APPLIED,
-        REJECTED_UNKNOWN_TAG,
-        REJECTED_NOT_WRITABLE,
-        REJECTED_TYPE_MISMATCH,
-        REJECTED_PROTOCOL_UNSUPPORTED,
-        FAILED_NO_CONNECTION,
-        FAILED_WRITE
-    }
-
-    /** Исход записи тега для формирования CommandResultMessage. */
-    public static final class CommandOutcome {
-        public final boolean success;
-        public final CommandStatus status;
-        public final String message;
-        public final Object appliedValue;
-
-        public CommandOutcome(boolean success, CommandStatus status, String message, Object appliedValue) {
-            this.success = success;
-            this.status = status;
-            this.message = message;
-            this.appliedValue = appliedValue;
-        }
     }
 
     /** Собрать (не сохраняя) сущность телеметрии для батч-вставки. */
