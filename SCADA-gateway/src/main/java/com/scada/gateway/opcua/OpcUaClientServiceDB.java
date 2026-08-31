@@ -10,6 +10,7 @@ import com.scada.gateway.kafka.producer.TelemetryProducer;
 import com.scada.gateway.kafka.producer.AlarmProducer;
 import com.scada.gateway.command.CommandOutcome;
 import com.scada.gateway.command.CommandStatus;
+import com.scada.gateway.command.CommandStatusClassifier;
 import com.scada.gateway.modbus.ModbusClientService;
 import com.scada.gateway.modbus.ModbusEndpoint;
 import com.scada.gateway.service.EventLogService;
@@ -26,8 +27,6 @@ import org.eclipse.milo.opcua.stack.core.types.structured.EndpointDescription;
 import org.eclipse.milo.opcua.stack.core.types.structured.ReadValueId;
 import org.eclipse.milo.opcua.stack.core.types.structured.ReadResponse;
 import org.eclipse.milo.opcua.stack.core.AttributeId;
-import org.eclipse.milo.opcua.stack.core.StatusCodes;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -843,7 +842,7 @@ public class OpcUaClientServiceDB {
                 return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
             }
             // Разбор неудачного StatusCode на осмысленные для оператора исходы.
-            return new CommandOutcome(false, classifyBadStatus(status),
+            return new CommandOutcome(false, CommandStatusClassifier.classify(status),
                     "OPC UA отклонил запись: " + status, null);
 
         } catch (Exception e) {
@@ -902,18 +901,6 @@ public class OpcUaClientServiceDB {
                 String.format("Записано %s = %s", tag.getName(), value),
                 Map.of("tagName", tag.getName(), "value", String.valueOf(value)));
         return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
-    }
-
-    /** Классификация неудачного StatusCode записи в фиксированный перечень исходов (A5). */
-    private CommandStatus classifyBadStatus(StatusCode status) {
-        long code = status.getValue();
-        if (code == StatusCodes.Bad_NotWritable || code == StatusCodes.Bad_WriteNotSupported) {
-            return CommandStatus.REJECTED_NOT_WRITABLE;
-        }
-        if (code == StatusCodes.Bad_TypeMismatch || code == StatusCodes.Bad_OutOfRange) {
-            return CommandStatus.REJECTED_TYPE_MISMATCH;
-        }
-        return CommandStatus.FAILED_WRITE;
     }
 
     /**
