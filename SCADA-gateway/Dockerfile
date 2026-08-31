@@ -15,4 +15,13 @@ EXPOSE 8888
 
 # Хосты Postgres/Kafka/симулятора приходят из env (см. docker-compose.yml):
 #   SPRING_DATASOURCE_URL, SPRING_KAFKA_BOOTSTRAP_SERVERS, SIM_HOST
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+
+# JVM-страховка (утечек в коде нет, это наблюдаемость + предсказуемость в контейнере):
+#   MaxRAMPercentage=75 — брать 75% от лимита ПАМЯТИ КОНТЕЙНЕРА, а не 25% от RAM хоста
+#     (по умолчанию голый java берёт ~25%; в K8s/compose задавай лимит памяти рядом);
+#   -Xlog:gc* — писать GC-лог в stdout, чтобы при жалобах на «тормозит» были ДАННЫЕ,
+#     а не гадание (частота minor/major GC, паузы, заполнение old gen).
+# Переопределяется без пересборки: docker run -e JAVA_OPTS="...".
+# sh -c + exec — чтобы java стала PID 1 и получала SIGTERM (чистый shutdown, @PreDestroy).
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -Xlog:gc*:stdout:time,uptime,level,tags"
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

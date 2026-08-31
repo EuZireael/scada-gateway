@@ -267,7 +267,8 @@ public class OpcUaClientServiceDB {
         // 2) закрываем старый клиент
         OpcUaClient client = opcClients.remove(id);
         if (client != null) {
-            try { client.disconnect().get(); } catch (Exception ignore) {}
+            // Таймаут и на disconnect: зависшее рассоединение иначе повесит супервизор.
+            try { client.disconnect().get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS); } catch (Exception ignore) {}
         }
         // 3) подключаемся заново тихо (connectOpcUaController сам запустит опрос)
         connectOpcUaController(controller, false);
@@ -391,7 +392,12 @@ public class OpcUaClientServiceDB {
         // Новое поколение опроса — этим гасим любой предыдущий поток по этому контроллеру.
         long gen = pollGeneration.merge(id, 1L, Long::sum);
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        executors.put(id, executor);
+        // put возвращает прежний пул: если по этому id уже крутился executor — гасим его,
+        // не полагаясь на вызывающего. Иначе newSingleThreadExecutor оставил бы висящий
+        // НЕ-daemon поток навсегда (утечка потока + JVM не выключится чисто). reconnectOpcUa
+        // и так гасит старый пул до нас — это защита от будущих путей реконнекта (напр. Modbus).
+        ExecutorService previous = executors.put(id, executor);
+        if (previous != null) previous.shutdownNow();
         runningStatus.put(id, true);
 
         String endpoint = controller.getEndpoint();
@@ -443,7 +449,12 @@ public class OpcUaClientServiceDB {
                     List<TelemetryEntity> batch = persistTelemetry ? new ArrayList<>(opcTags.size()) : null;
 
                     try {
-                        ReadResponse resp = client.read(0.0, TimestampsToReturn.Both, reads).get();
+                        // Таймаут на чтении — как на connect/write: «тихая» смерть OPC UA (TCP
+                        // жив, протокол завис) вешает .get() навсегда. Без него поток висит,
+                        // пока супервизор (30 c) не сделает shutdownNow; с таймаутом цикл сам
+                        // ловит зависание за opcuaOpTimeoutMs и метит его BAD.
+                        ReadResponse resp = client.read(0.0, TimestampsToReturn.Both, reads)
+                                .get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS);
                         DataValue[] results = resp.getResults();
                         for (int i = 0; i < opcTags.size(); i++) {
                             TagEntity tag = opcTags.get(i);
@@ -464,7 +475,10 @@ public class OpcUaClientServiceDB {
                         goodReads = opcTags.size();
                     } catch (Exception e) {
                         // Обрыв на уровне запроса: весь цикл — BAD (супервизор переподнимет).
-                        lastErr = e.getMessage();
+                        // Таймаут метим отдельно — это «тихое» зависание, а не обычная ошибка.
+                        lastErr = e instanceof TimeoutException
+                                ? "таймаут чтения " + opcuaOpTimeoutMs + " мс (сервер завис)"
+                                : e.getMessage();
                         badReads = opcTags.size();
                         Instant ts = Instant.now();
                         for (TagEntity tag : opcTags) {
@@ -1066,7 +1080,8 @@ public class OpcUaClientServiceDB {
         for (Map.Entry<Long, OpcUaClient> entry : opcClients.entrySet()) {
             if (entry.getValue() != null) {
                 try {
-                    entry.getValue().disconnect().get();
+                    // Таймаут и на shutdown: иначе зависший disconnect повесит выключение JVM.
+                    entry.getValue().disconnect().get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS);
                     log.info("Disconnected OPC UA client for controller {}", entry.getKey());
                 } catch (Exception ignored) {}
             }
