@@ -9,6 +9,7 @@ import com.scada.gateway.repository.TelemetryRepository;
 import com.scada.gateway.kafka.producer.TelemetryProducer;
 import com.scada.gateway.kafka.producer.AlarmProducer;
 import com.scada.gateway.modbus.ModbusClientService;
+import com.scada.gateway.modbus.ModbusEndpoint;
 import com.scada.gateway.service.EventLogService;
 
 import jakarta.annotation.PostConstruct;
@@ -509,8 +510,8 @@ public class OpcUaClientServiceDB {
     }
 
     private void startModbusPolling(ControllerEntity controller, ExecutorService executor, long gen) {
-        String host = extractModbusHost(controller.getEndpoint());
-        int port = extractModbusPort(controller.getEndpoint(), 502);
+        String host = ModbusEndpoint.host(controller.getEndpoint());
+        int port = ModbusEndpoint.port(controller.getEndpoint(), 502);
         final Long cid = controller.getId();
 
         eventLogService.logConnection(controller, "CONNECTING", "Modbus endpoint: " + controller.getEndpoint());
@@ -865,8 +866,8 @@ public class OpcUaClientServiceDB {
         if (tag.getModbusAddress() == null) {
             return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "У тега нет Modbus-адреса", null);
         }
-        String host = extractModbusHost(ctrl.getEndpoint());
-        int port = extractModbusPort(ctrl.getEndpoint(), 502);
+        String host = ModbusEndpoint.host(ctrl.getEndpoint());
+        int port = ModbusEndpoint.port(ctrl.getEndpoint(), 502);
         int addr = tag.getModbusAddress();
         int unitId = tag.getModbusUnitId();
         String dt = dataType != null ? dataType : tag.getDataType();
@@ -990,31 +991,6 @@ public class OpcUaClientServiceDB {
         } catch (Exception e) {
             log.error("DB batch save error ({} точек): {}", batch.size(), e.getMessage());
             eventLogService.logError("Database", "Failed to batch-save telemetry", e, null, null);
-        }
-    }
-
-    private String extractModbusHost(String endpoint) {
-        try {
-            String s = endpoint.replace("modbus://", "");
-            if (s.contains(":")) {
-                return s.split(":")[0];
-            }
-            return s;
-        } catch (Exception e) {
-            return "127.0.0.1";
-        }
-    }
-
-    private int extractModbusPort(String endpoint, int defaultPort) {
-        try {
-            String s = endpoint.replace("modbus://", "");
-            String[] parts = s.split(":");
-            if (parts.length > 1) {
-                return Integer.parseInt(parts[1]);
-            }
-            return defaultPort;
-        } catch (Exception e) {
-            return defaultPort;
         }
     }
 
