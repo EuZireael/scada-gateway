@@ -1,3 +1,12 @@
+# ============================================================================
+# Конфигурация SCADA-шлюза. Секции ниже:
+#   server      — HTTP-порт (actuator + REST мониторинга)
+#   spring      — datasource (Postgres), JPA (ddl-auto=validate), Flyway, Kafka
+#   gateway     — флаги горячего пути (persist-telemetry, таймауты OPC UA/Modbus)
+#   logging     — уровни логов
+#   management  — actuator + метрики Prometheus (/actuator/prometheus)
+# Контроллеры и теги вынесены в controllers.yaml (подключается через spring.config.import).
+# ============================================================================
 server:
   port: 8888
 
