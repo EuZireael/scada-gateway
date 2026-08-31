@@ -1,0 +1,69 @@
+package com.scada.gateway.opcua;
+
+import org.eclipse.milo.opcua.stack.core.types.builtin.Variant;
+import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.UInteger;
+
+/**
+ * Конвертация значений между Java-объектами и OPC UA {@link Variant}.
+ *
+ * <p>Выделено из god-класса OpcUaClientServiceDB. Это чистые функции — без состояния,
+ * сети и Spring, — поэтому их легко и быстро покрыть модульными тестами (см.
+ * {@code ValueCodecTest}) без поднятия контекста и без моков. Это и есть первый,
+ * самый безопасный «шов» декомпозиции: одна ответственность → отдельный класс → тесты.
+ *
+ * <p>Методы статические намеренно: у кодека нет собственного состояния, плодить бин незачем.
+ */
+public final class ValueCodec {
+
+    private ValueCodec() {
+        // Утилитный класс — не инстанцируем.
+    }
+
+    /** Значение команды → OPC UA {@link Variant} нужного типа (по имени типа тега). */
+    public static Variant toVariant(String dataType, Object value) {
+        String dt = dataType == null ? "" : dataType.trim().toUpperCase();
+        if (dt.startsWith("BOOL")) return new Variant(toBool(value));
+        if (dt.startsWith("INT"))  return new Variant(toInt(value));
+        if (dt.startsWith("FLOAT") || dt.startsWith("REAL")) return new Variant(toFloat(value));
+        if (dt.startsWith("DOUBLE")) return new Variant(toDouble(value));
+        return new Variant(value);
+    }
+
+    /**
+     * OPC UA {@link Variant} → Java-значение. Беззнаковый {@link UInteger} из Milo
+     * разворачиваем в {@code long}, чтобы дальше по конвейеру (JDBC/Kafka) был обычный
+     * Java-Number, а не специальный тип стека.
+     */
+    public static Object extractValue(Variant variant) {
+        if (variant == null || variant.isNull()) return null;
+
+        Object v = variant.getValue();
+
+        if (v instanceof UInteger) {
+            return ((UInteger) v).longValue();
+        }
+
+        return v;
+    }
+
+    public static Boolean toBool(Object v) {
+        if (v instanceof Boolean b) return b;
+        if (v instanceof Number n) return n.doubleValue() != 0.0;
+        return Boolean.parseBoolean(String.valueOf(v).trim());
+    }
+
+    public static Integer toInt(Object v) {
+        if (v instanceof Number n) return n.intValue();
+        return Integer.parseInt(String.valueOf(v).trim());
+    }
+
+    public static Float toFloat(Object v) {
+        if (v instanceof Number n) return n.floatValue();
+        return Float.parseFloat(String.valueOf(v).trim());
+    }
+
+    public static Double toDouble(Object v) {
+        if (v instanceof Number n) return n.doubleValue();
+        return Double.parseDouble(String.valueOf(v).trim());
+    }
+}

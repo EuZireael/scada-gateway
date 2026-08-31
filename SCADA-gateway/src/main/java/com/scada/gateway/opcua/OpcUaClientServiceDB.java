@@ -18,7 +18,6 @@ import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
 import org.eclipse.milo.opcua.sdk.client.api.config.OpcUaClientConfig;
 import org.eclipse.milo.opcua.stack.client.DiscoveryClient;
 import org.eclipse.milo.opcua.stack.core.types.builtin.*;
-import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.UInteger;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
 import org.eclipse.milo.opcua.stack.core.types.structured.EndpointDescription;
 import org.eclipse.milo.opcua.stack.core.types.structured.ReadValueId;
@@ -459,7 +458,7 @@ public class OpcUaClientServiceDB {
                         for (int i = 0; i < opcTags.size(); i++) {
                             TagEntity tag = opcTags.get(i);
                             DataValue dv = (results != null && i < results.length) ? results[i] : null;
-                            Object val = dv != null ? extractValue(dv.getValue()) : null;
+                            Object val = dv != null ? ValueCodec.extractValue(dv.getValue()) : null;
                             String quality = (dv != null && dv.getStatusCode().isGood()) ? "GOOD" : "BAD";
                             // A2: метка времени = момент снятия значения сервером (sourceTime),
                             // а не момент отправки. Фолбэк serverTime → now.
@@ -820,7 +819,7 @@ public class OpcUaClientServiceDB {
         try {
             nodeId = NodeId.parse(tag.getNodeId());
             String dt = dataType != null ? dataType : tag.getDataType();
-            variant = toVariant(dt, value);
+            variant = ValueCodec.toVariant(dt, value);
         } catch (Exception e) {
             log.warn("Значение '{}' не приводится к типу тега {}: {}", value, tag.getName(), e.getMessage());
             return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
@@ -874,11 +873,11 @@ public class OpcUaClientServiceDB {
 
         try {
             if ("FLOAT".equalsIgnoreCase(dt)) {
-                modbusClientService.writeFloat(host, port, addr, unitId, toFloat(value));
+                modbusClientService.writeFloat(host, port, addr, unitId, ValueCodec.toFloat(value));
             } else if ("INT".equalsIgnoreCase(dt) || "INT16".equalsIgnoreCase(dt)) {
-                modbusClientService.writeRegister(host, port, addr, unitId, toInt(value) & 0xFFFF);
+                modbusClientService.writeRegister(host, port, addr, unitId, ValueCodec.toInt(value) & 0xFFFF);
             } else if ("BOOLEAN".equalsIgnoreCase(dt)) {
-                modbusClientService.writeRegister(host, port, addr, unitId, toBool(value) ? 1 : 0);
+                modbusClientService.writeRegister(host, port, addr, unitId, ValueCodec.toBool(value) ? 1 : 0);
             } else {
                 return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
                         "Неизвестный тип Modbus-тега: " + dt, null);
@@ -925,37 +924,6 @@ public class OpcUaClientServiceDB {
             return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "Тег не найден по имени: " + tagName, null);
         }
         return writeTag(tag.getId(), value, dataType);
-    }
-
-    /** Конвертация значения команды в OPC UA Variant нужного типа. */
-    private Variant toVariant(String dataType, Object value) {
-        String dt = dataType == null ? "" : dataType.trim().toUpperCase();
-        if (dt.startsWith("BOOL")) return new Variant(toBool(value));
-        if (dt.startsWith("INT"))  return new Variant(toInt(value));
-        if (dt.startsWith("FLOAT") || dt.startsWith("REAL")) return new Variant(toFloat(value));
-        if (dt.startsWith("DOUBLE")) return new Variant(toDouble(value));
-        return new Variant(value);
-    }
-
-    private Boolean toBool(Object v) {
-        if (v instanceof Boolean b) return b;
-        if (v instanceof Number n) return n.doubleValue() != 0.0;
-        return Boolean.parseBoolean(String.valueOf(v).trim());
-    }
-
-    private Integer toInt(Object v) {
-        if (v instanceof Number n) return n.intValue();
-        return Integer.parseInt(String.valueOf(v).trim());
-    }
-
-    private Float toFloat(Object v) {
-        if (v instanceof Number n) return n.floatValue();
-        return Float.parseFloat(String.valueOf(v).trim());
-    }
-
-    private Double toDouble(Object v) {
-        if (v instanceof Number n) return n.doubleValue();
-        return Double.parseDouble(String.valueOf(v).trim());
     }
 
     /**
@@ -1023,18 +991,6 @@ public class OpcUaClientServiceDB {
             log.error("DB batch save error ({} точек): {}", batch.size(), e.getMessage());
             eventLogService.logError("Database", "Failed to batch-save telemetry", e, null, null);
         }
-    }
-
-    private Object extractValue(Variant variant) {
-        if (variant == null || variant.isNull()) return null;
-
-        Object v = variant.getValue();
-
-        if (v instanceof UInteger) {
-            return ((UInteger) v).longValue();
-        }
-
-        return v;
     }
 
     private String extractModbusHost(String endpoint) {
