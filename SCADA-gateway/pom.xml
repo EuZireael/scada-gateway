@@ -63,6 +63,14 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Flyway: версионированные миграции схемы вместо ddl-auto=update.
+             Spring Boot 3.2.x тянет Flyway 9.x — поддержка Postgres в flyway-core,
+             отдельный модуль flyway-database-postgresql (Flyway 10+) не нужен. -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
         <!-- Spring Kafka -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>

@@ -1,14 +1,15 @@
 package com.scada.gateway.opcua;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scada.gateway.model.entity.ControllerEntity;
 import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.model.entity.TelemetryEntity;
+import com.scada.gateway.model.TagProtocols;
 import com.scada.gateway.service.ConfigurationService;
-import com.scada.gateway.repository.TelemetryRepository;
-import com.scada.gateway.kafka.producer.TelemetryProducer;
-import com.scada.gateway.kafka.producer.AlarmProducer;
+import com.scada.gateway.telemetry.TelemetryProcessor;
+import com.scada.gateway.command.OpcUaClientRegistry;
+import com.scada.gateway.command.TagCatalog;
 import com.scada.gateway.modbus.ModbusClientService;
+import com.scada.gateway.modbus.ModbusEndpoint;
 import com.scada.gateway.service.EventLogService;
 
 import jakarta.annotation.PostConstruct;
@@ -18,14 +19,11 @@ import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
 import org.eclipse.milo.opcua.sdk.client.api.config.OpcUaClientConfig;
 import org.eclipse.milo.opcua.stack.client.DiscoveryClient;
 import org.eclipse.milo.opcua.stack.core.types.builtin.*;
-import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.UInteger;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
 import org.eclipse.milo.opcua.stack.core.types.structured.EndpointDescription;
 import org.eclipse.milo.opcua.stack.core.types.structured.ReadValueId;
 import org.eclipse.milo.opcua.stack.core.types.structured.ReadResponse;
 import org.eclipse.milo.opcua.stack.core.AttributeId;
-import org.eclipse.milo.opcua.stack.core.StatusCodes;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,16 +35,14 @@ import java.util.*;
 import java.util.concurrent.*;
 
 @Service
-public class OpcUaClientServiceDB {
+public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(OpcUaClientServiceDB.class);
 
     private final ConfigurationService configurationService;
-    private final TelemetryRepository telemetryRepository;
-    private final TelemetryProducer telemetryProducer;
-    private final AlarmProducer alarmProducer;
     private final ModbusClientService modbusClientService;
     private final EventLogService eventLogService;
+    private final TelemetryProcessor telemetryProcessor;
 
     private final Map<Long, OpcUaClient> opcClients = new ConcurrentHashMap<>();
     private final Map<Long, ExecutorService> executors = new ConcurrentHashMap<>();
@@ -76,29 +72,13 @@ public class OpcUaClientServiceDB {
     /** Тот же набор тегов, но по имени канала (= полный путь узла) — адресация команд извне. */
     private final Map<String, TagEntity> tagsByName = new ConcurrentHashMap<>();
 
-    // Последнее качество по тегу — чтобы порождать событие при смене GOOD↔BAD.
-    private final Map<Long, String> lastQualityByTag = new ConcurrentHashMap<>();
-
-    // Активный эпизод аларма по тегу — для edge-триггера (не слать аларм каждый цикл).
-    private final Map<Long, ActiveAlarm> activeAlarmByTag = new ConcurrentHashMap<>();
-
     // Разобранный NodeId по его строке — чтобы не парсить строку на каждое чтение.
     private final Map<String, NodeId> nodeIdCache = new ConcurrentHashMap<>();
 
     // --- Флаги горячего пути (application.yaml → gateway.*) ---
-    /** Считать ли пороги/алармы в шлюзе. По умолчанию false — алармы считает Monitor. */
-    @Value("${gateway.alarms.enabled:false}")
-    private boolean alarmsEnabled;
     /** Писать ли каждую точку в локальную БД шлюза. Значения в Kafka идут всегда. */
     @Value("${gateway.persist-telemetry:true}")
     private boolean persistTelemetry;
-    /**
-     * A3: слать ли телеметрию при value==null (обрыв, quality=BAD). По умолчанию
-     * false — иначе null как falsy «уверенно закрыл бы клапан» на фронте без правок
-     * B2/C4. Включать только когда монитор (C4) и фронт (B2) готовы к «нет данных».
-     */
-    @Value("${gateway.send-bad-frames:false}")
-    private boolean sendBadFrames;
     /**
      * Таймаут блокирующих OPC UA-вызовов (discovery / connect / write). БЕЗ него
      * зависший handshake вешает вызывающий поток НАВСЕГДА — поток супервизора при
@@ -107,37 +87,18 @@ public class OpcUaClientServiceDB {
     @Value("${gateway.opcua-op-timeout-ms:5000}")
     private long opcuaOpTimeoutMs;
 
-    /** Активный (ещё не закрытый) аларм по тегу: стабильный alarmId на весь эпизод. */
-    private static final class ActiveAlarm {
-        final String condition;  // LOW | HIGH
-        final String alarmId;    // стабильный идентификатор эпизода
-        final String severity;
-        final double threshold;
-
-        ActiveAlarm(String condition, String alarmId, String severity, double threshold) {
-            this.condition = condition;
-            this.alarmId = alarmId;
-            this.severity = severity;
-            this.threshold = threshold;
-        }
-    }
-
     private final com.scada.gateway.kafka.producer.EventProducer eventProducer;
 
     public OpcUaClientServiceDB(ConfigurationService configurationService,
-                                TelemetryRepository telemetryRepository,
-                                TelemetryProducer telemetryProducer,
-                                AlarmProducer alarmProducer,
                                 ModbusClientService modbusClientService,
                                 EventLogService eventLogService,
-                                com.scada.gateway.kafka.producer.EventProducer eventProducer) {
+                                com.scada.gateway.kafka.producer.EventProducer eventProducer,
+                                TelemetryProcessor telemetryProcessor) {
         this.configurationService = configurationService;
-        this.telemetryRepository = telemetryRepository;
-        this.telemetryProducer = telemetryProducer;
-        this.alarmProducer = alarmProducer;
         this.modbusClientService = modbusClientService;
         this.eventLogService = eventLogService;
         this.eventProducer = eventProducer;
+        this.telemetryProcessor = telemetryProcessor;
     }
 
     /**
@@ -185,8 +146,7 @@ public class OpcUaClientServiceDB {
         eventLogService.logSystem("INFO", "SCADA Gateway starting up", Map.of("component", "OpcUaClientService"));
 
         loadConfiguration();
-        log.info("⚙ Флаги горячего пути: alarms.enabled={}, persist-telemetry={}",
-                alarmsEnabled, persistTelemetry);
+        log.info("⚙ Флаг горячего пути: persist-telemetry={}", persistTelemetry);
 
         List<ControllerEntity> controllers = configurationService.getAllControllers();
 
@@ -431,7 +391,7 @@ public class OpcUaClientServiceDB {
                     List<ReadValueId> reads = new ArrayList<>();
                     long cycleDelay = 1000L;
                     for (TagEntity tag : allTags) {
-                        if (!tag.isEnabled() || !isOpcUaTag(tag)) continue;
+                        if (!tag.isEnabled() || !TagProtocols.isOpcUaTag(tag)) continue;
                         NodeId nodeId = nodeIdCache.computeIfAbsent(tag.getNodeId(), NodeId::parse);
                         opcTags.add(tag);
                         reads.add(new ReadValueId(nodeId, AttributeId.Value.uid(), null, QualifiedName.NULL_VALUE));
@@ -459,16 +419,16 @@ public class OpcUaClientServiceDB {
                         for (int i = 0; i < opcTags.size(); i++) {
                             TagEntity tag = opcTags.get(i);
                             DataValue dv = (results != null && i < results.length) ? results[i] : null;
-                            Object val = dv != null ? extractValue(dv.getValue()) : null;
+                            Object val = dv != null ? ValueCodec.extractValue(dv.getValue()) : null;
                             String quality = (dv != null && dv.getStatusCode().isGood()) ? "GOOD" : "BAD";
                             // A2: метка времени = момент снятия значения сервером (sourceTime),
                             // а не момент отправки. Фолбэк serverTime → now.
                             Instant ts = sourceTimeOf(dv);
 
                             if (tag.isRecordDevice() && "GOOD".equals(quality)) {
-                                processDeviceRecord(tag, val, quality, ts, controller);
+                                telemetryProcessor.processDeviceRecord(tag, val, quality, ts, controller);
                             } else {
-                                processTagValue(tag, val, quality, ts, batch);
+                                telemetryProcessor.processTagValue(tag, val, quality, ts, batch);
                             }
                         }
                         // Запрос прошёл → связь есть (пер-узловые BAD-статусы связь не роняют).
@@ -482,11 +442,11 @@ public class OpcUaClientServiceDB {
                         badReads = opcTags.size();
                         Instant ts = Instant.now();
                         for (TagEntity tag : opcTags) {
-                            processTagValue(tag, null, "BAD", ts, batch);
+                            telemetryProcessor.processTagValue(tag, null, "BAD", ts, batch);
                         }
                     }
 
-                    if (batch != null && !batch.isEmpty()) flushTelemetry(batch);
+                    if (batch != null && !batch.isEmpty()) telemetryProcessor.flushTelemetry(batch);
 
                     // Только текущее поколение опроса правит состояние связи (иначе flapping
                     // от «умирающего» старого потока: DISCONNECTED/CONNECTED вперемешку).
@@ -510,8 +470,8 @@ public class OpcUaClientServiceDB {
     }
 
     private void startModbusPolling(ControllerEntity controller, ExecutorService executor, long gen) {
-        String host = extractModbusHost(controller.getEndpoint());
-        int port = extractModbusPort(controller.getEndpoint(), 502);
+        String host = ModbusEndpoint.host(controller.getEndpoint());
+        int port = ModbusEndpoint.port(controller.getEndpoint(), 502);
         final Long cid = controller.getId();
 
         eventLogService.logConnection(controller, "CONNECTING", "Modbus endpoint: " + controller.getEndpoint());
@@ -527,7 +487,7 @@ public class OpcUaClientServiceDB {
                     List<TelemetryEntity> batch = persistTelemetry ? new ArrayList<>() : null;
 
                     for (TagEntity tag : tags) {
-                        if (!tag.isEnabled() || !isModbusTag(tag)) continue;
+                        if (!tag.isEnabled() || !TagProtocols.isModbusTag(tag)) continue;
 
                         try {
                             Object value = null;
@@ -557,19 +517,19 @@ public class OpcUaClientServiceDB {
                             if (value != null) goodReads++; else badReads++;
                             // A2: у Modbus источника времени в протоколе нет — ставим момент
                             // завершения чтения регистра, не момент отправки в Kafka.
-                            processTagValue(tag, value, quality, Instant.now(), batch);
+                            telemetryProcessor.processTagValue(tag, value, quality, Instant.now(), batch);
 
                         } catch (Exception e) {
                             // Пер-теговый лог не пишем; состояние связи — на уровне цикла.
                             badReads++;
                             lastErr = e.getMessage();
-                            processTagValue(tag, null, "BAD", Instant.now(), batch);
+                            telemetryProcessor.processTagValue(tag, null, "BAD", Instant.now(), batch);
                         }
 
                         cycleDelay = Math.min(cycleDelay, Math.max(tag.getPollingRate(), 100L));
                     }
 
-                    if (batch != null && !batch.isEmpty()) flushTelemetry(batch);
+                    if (batch != null && !batch.isEmpty()) telemetryProcessor.flushTelemetry(batch);
 
                     // Оценка связи по итогам цикла (Modbus само-восстанавливается лениво).
                     if (isCurrentPoll(cid, gen)) {
@@ -591,404 +551,24 @@ public class OpcUaClientServiceDB {
         });
     }
 
-    private boolean isOpcUaTag(TagEntity tag) {
-        if ("modbus".equalsIgnoreCase(tag.getProtocol())) return false;
-        return "OPCUA".equalsIgnoreCase(tag.getProtocol()) ||
-               (tag.getNodeId() != null && !tag.getNodeId().isEmpty());
+    // --- Порты для CommandService (DIP): god-класс — владелец живых карт (кэш тегов,
+    // OPC UA-клиенты), поэтому отдаёт их только на ЧТЕНИЕ. Сама логика записи
+    // (writeTag/writeOpcUa/writeModbus) переехала в com.scada.gateway.command.CommandService.
+    @Override
+    public TagEntity byId(Long id) {
+        return id == null ? null : tagCache.get(id);
     }
 
-    private boolean isModbusTag(TagEntity tag) {
-        return "MODBUS".equalsIgnoreCase(tag.getProtocol()) || 
-               (tag.getModbusAddress() != null && tag.getModbusAddress() > 0);
+    @Override
+    public TagEntity byName(String name) {
+        return name == null ? null : tagsByName.get(name);
     }
 
-    private final ObjectMapper recordMapper = new ObjectMapper();
-
-    /**
-     * Разбор СЫРОЙ ЗАПИСИ ПРИБОРА (роль реального драйвера PAC_easy_drv_LZ).
-     * Значение record — строка вида "ИМЯ={ПОЛЕ=знач, ПОЛЕ=знач, ...}". Метод:
-     *   1) вырезает содержимое {...} и разбивает на пары поле=значение;
-     *   2) по карте fieldsJson находит для поля channelId (node.id базы) и тип;
-     *   3) приводит значение к типу и шлёт КАЖДОЕ поле в Kafka отдельным каналом
-     *      (tagId = node.id), device/field/type — в metadata.
-     */
-    private void processDeviceRecord(TagEntity tag, Object record, String quality, Instant timestamp, ControllerEntity controller) {
-        if (record == null || tag.getFieldsJson() == null) return;
-        String s = record.toString();
-        int lb = s.indexOf('{'), rb = s.lastIndexOf('}');
-        if (lb < 0 || rb <= lb) {
-            log.warn("Запись прибора {} без {{}}: {}", tag.getDeviceName(), s);
-            return;
-        }
-        // Разбираем пары поле=значение из содержимого { ... }.
-        Map<String, String> parsed = new HashMap<>();
-        for (String part : s.substring(lb + 1, rb).split(",")) {
-            int eq = part.indexOf('=');
-            if (eq > 0) parsed.put(part.substring(0, eq).trim(), part.substring(eq + 1).trim());
-        }
-        // Карта полей: [{"name":"ST","channelId":385,"dataType":"BOOLEAN"},…].
-        List<Map<String, Object>> fields;
-        try {
-            fields = recordMapper.readValue(tag.getFieldsJson(), List.class);
-        } catch (Exception e) {
-            log.error("fieldsJson прибора {} не разобран: {}", tag.getDeviceName(), e.getMessage());
-            return;
-        }
-        for (Map<String, Object> f : fields) {
-            String field = (String) f.get("name");
-            String raw = parsed.get(field);
-            if (raw == null) continue;
-            String dt = String.valueOf(f.get("dataType"));
-            Object value;
-            try {
-                value = "BOOLEAN".equalsIgnoreCase(dt)
-                        ? (!"0".equals(raw) && !raw.isEmpty())
-                        : Double.parseDouble(raw);
-            } catch (NumberFormatException nfe) {
-                continue;
-            }
-            String channelName = tag.getDeviceName() + "." + field;
-            telemetryProducer.sendFieldTelemetry(channelName, value, quality, timestamp);
-        }
+    @Override
+    public OpcUaClient forController(Long controllerId) {
+        return controllerId == null ? null : opcClients.get(controllerId);
     }
 
-    private void processTagValue(TagEntity tag, Object value, String quality, Instant timestamp, List<TelemetryEntity> batch) {
-        // Чтение тега НЕ логируем в event_log на каждый опрос. Значения идут в Kafka
-        // (и, если включён persist-telemetry, в локальную БД батчем в конце цикла);
-        // в журнал событий пишем только смену качества и ошибки.
-
-        // Событие при смене качества сигнала (GOOD↔BAD) — попадает в журнал событий.
-        String prevQuality = lastQualityByTag.put(tag.getId(), quality);
-        if (prevQuality != null && !prevQuality.equals(quality)) {
-            String sev = "GOOD".equalsIgnoreCase(quality) ? "INFO" : "WARNING";
-            Map<String, Object> details = new HashMap<>();
-            details.put("tagId", tag.getId());
-            details.put("tagName", tag.getName());
-            details.put("from", prevQuality);
-            details.put("to", quality);
-            eventLogService.logEvent("QUALITY_CHANGE", "OpcUaClient", sev,
-                    String.format("Quality changed for %s: %s → %s", tag.getName(), prevQuality, quality),
-                    details);
-        }
-
-        // Пороги/алармы — только если включены флагом (по умолчанию их считает Monitor).
-        if (alarmsEnabled && value instanceof Number) {
-            evaluateAlarms(tag, ((Number) value).doubleValue());
-        }
-
-        // Локальная история: копим в буфер цикла (batch != null ⇔ persist-telemetry=true).
-        if (batch != null) {
-            batch.add(buildTelemetry(tag, value, quality, timestamp));
-        }
-
-        if (value != null) {
-            telemetryProducer.sendTelemetry(tag, value, quality, timestamp);
-            // per-tag на каждый опрос — только debug (иначе поток INFO на 2471 тег/цикл).
-            log.debug("📊 {} = {}", tag.getName(), value);
-        } else {
-            // A3: NULL при обрыве. BAD-кадр шлём только при включённом флаге — иначе тег
-            // замирает на последнем значении (безопаснее, чем falsy null на фронте без
-            // правок B2/C4). Состояние связи фиксирует markControllerDown на уровне цикла.
-            if (sendBadFrames) {
-                telemetryProducer.sendTelemetry(tag, null, quality, timestamp);
-            }
-            log.debug("⚠️ {} = NULL (quality: {})", tag.getName(), quality);
-        }
-    }
-
-    /**
-     * Edge-триггер алармов. Аларм публикуется в Kafka ОДИН раз при выходе
-     * значения за предел и ещё раз (cleared=true) при возврате в норму.
-     * Пока значение остаётся вне предела — повторные алармы НЕ шлются, что
-     * убирает «потоп» одинаковых алармов каждую секунду. Гистерезис (deadband)
-     * гасит дребезг у самой границы.
-     *
-     * Severity дифференцируем: ниже min → MINOR (сильно ниже → MAJOR),
-     * выше max → MAJOR (сильно выше → CRITICAL).
-     */
-    private void evaluateAlarms(TagEntity tag, double numValue) {
-        Double min = tag.getMinValue();
-        Double max = tag.getMaxValue();
-        if (min == null && max == null) {
-            return;
-        }
-
-        String unit = tag.getUnit() != null ? tag.getUnit() : "";
-        double range = (min != null && max != null)
-                ? Math.max(max - min, 0.0001)
-                : Math.max(Math.abs(numValue), 1.0);
-        double deadband = 0.02 * range; // 2% диапазона — анти-дребезг на возврате в норму
-
-        ActiveAlarm active = activeAlarmByTag.get(tag.getId());
-
-        String condition = null; // HIGH | LOW | null(норма)
-        String severity = null;
-        double threshold = 0;
-        String message = null;
-
-        if (max != null && numValue > max) {
-            condition = "HIGH";
-            severity = (numValue > max + 0.3 * range) ? "CRITICAL" : "MAJOR";
-            threshold = max;
-            message = String.format("High value: %.2f > %.2f %s", numValue, max, unit);
-        } else if (min != null && numValue < min) {
-            condition = "LOW";
-            severity = (numValue < min - 0.3 * range) ? "MAJOR" : "MINOR";
-            threshold = min;
-            message = String.format("Low value: %.2f < %.2f %s", numValue, min, unit);
-        }
-
-        if (condition != null) {
-            // В зоне аларма: шлём только при НОВОМ эпизоде или смене направления
-            // нарушения (LOW↔HIGH); пока то же нарушение — молчим (анти-флуд).
-            if (active == null || !active.condition.equals(condition)) {
-                if (active != null) {
-                    sendClear(tag, active, numValue); // закрываем прежнее нарушение другого знака
-                }
-                String alarmId = "ALARM_" + tag.getId() + "_" + condition + "_" + System.currentTimeMillis();
-                eventLogService.logAlarm(tag, severity, message, threshold, numValue);
-                alarmProducer.sendAlarm(tag, alarmId, severity, message, threshold, numValue, false);
-                activeAlarmByTag.put(tag.getId(), new ActiveAlarm(condition, alarmId, severity, threshold));
-            }
-            return;
-        }
-
-        // Значение в норме: если был активный аларм и вернулись в норму с
-        // запасом (deadband) — закрываем эпизод (cleared=true) ровно один раз.
-        if (active != null) {
-            boolean backToNormal =
-                    (min == null || numValue >= min + deadband) &&
-                    (max == null || numValue <= max - deadband);
-            if (backToNormal) {
-                sendClear(tag, active, numValue);
-                activeAlarmByTag.remove(tag.getId());
-            }
-        }
-    }
-
-    private void sendClear(TagEntity tag, ActiveAlarm active, double numValue) {
-        String message = String.format("Cleared: %.2f back to normal", numValue);
-        alarmProducer.sendAlarm(tag, active.alarmId, active.severity, message, active.threshold, numValue, true);
-        eventLogService.logEvent("ALARM_CLEARED", "OpcUaClient", "INFO",
-                String.format("Alarm cleared for %s (%.2f)", tag.getName(), numValue),
-                Map.of("tagId", tag.getId(), "tagName", tag.getName(), "alarmId", active.alarmId));
-    }
-
-    /**
-     * Запись значения в тег ПЛК по OPC UA (команда управления от Monitor Srv).
-     * Возвращает исход для отправки результата обратно в Monitor.
-     */
-    public CommandOutcome writeTag(Long tagId, Object value, String dataType) {
-        TagEntity tag = tagCache.get(tagId);
-        if (tag == null) {
-            return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "Тег не найден: " + tagId, null);
-        }
-        // Доступ к записи — как у реального ПЛК: показание датчика (давление, расход)
-        // изменить нельзя, только команду актуатора (клапан/мотор/DO). Отклоняем ДО
-        // похода в контроллер: для OPC UA это экономит round-trip до Bad_NotWritable,
-        // для Modbus — ЕДИНСТВЕННАЯ защита (у holding-регистра нет признака «только
-        // чтение», без этой проверки регистр датчика молча перезапишется).
-        if (!tag.isWritable()) {
-            return new CommandOutcome(false, CommandStatus.REJECTED_NOT_WRITABLE,
-                    "Тег только для чтения (датчик), запись запрещена: " + tag.getName(), null);
-        }
-        // Маршрутизация по протоколу — деталь реализации шлюза, наружу не торчит (A6).
-        // Запись реализована для OPC UA и Modbus; иной протокол → PROTOCOL_UNSUPPORTED.
-        if (isOpcUaTag(tag)) {
-            return writeOpcUa(tag, value, dataType);
-        }
-        if (isModbusTag(tag)) {
-            return writeModbus(tag, value, dataType);
-        }
-        String proto = tag.getProtocol() != null ? tag.getProtocol() : "неизвестный";
-        return new CommandOutcome(false, CommandStatus.REJECTED_PROTOCOL_UNSUPPORTED,
-                "Запись не реализована для протокола: " + proto, null);
-    }
-
-    /** Запись по OPC UA. */
-    private CommandOutcome writeOpcUa(TagEntity tag, Object value, String dataType) {
-        Long controllerId = tag.getController() != null ? tag.getController().getId() : null;
-        OpcUaClient client = controllerId != null ? opcClients.get(controllerId) : null;
-        if (client == null) {
-            return new CommandOutcome(false, CommandStatus.FAILED_NO_CONNECTION, "Контроллер не подключён", null);
-        }
-
-        // Приведение типа — ОТДЕЛЬНО от записи: ошибка конвертации значения к типу тега
-        // это ошибка данных/конфигурации (REJECTED_TYPE_MISMATCH), а не сбой связи.
-        NodeId nodeId;
-        Variant variant;
-        try {
-            nodeId = NodeId.parse(tag.getNodeId());
-            String dt = dataType != null ? dataType : tag.getDataType();
-            variant = toVariant(dt, value);
-        } catch (Exception e) {
-            log.warn("Значение '{}' не приводится к типу тега {}: {}", value, tag.getName(), e.getMessage());
-            return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
-                    "Значение не приводится к типу тега: " + e.getMessage(), null);
-        }
-
-        try {
-            // status/time = null: их проставляет сервер (канон milo для записи).
-            DataValue dataValue = new DataValue(variant, null, null);
-            // Таймаут: без него зависшая запись вешает поток консьюмера команд навсегда.
-            StatusCode status = client.writeValue(nodeId, dataValue).get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS);
-
-            if (status.isGood()) {
-                log.info("✍ OPC UA записано {} = {} (tag {})", tag.getName(), variant.getValue(), tag.getId());
-                eventLogService.logEvent("COMMAND_APPLIED", "OpcUaClient", "INFO",
-                        String.format("Записано %s = %s", tag.getName(), value),
-                        Map.of("tagId", tag.getId(), "value", String.valueOf(value)));
-                return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
-            }
-            // Разбор неудачного StatusCode на осмысленные для оператора исходы.
-            return new CommandOutcome(false, classifyBadStatus(status),
-                    "OPC UA отклонил запись: " + status, null);
-
-        } catch (Exception e) {
-            log.error("Ошибка записи тега {}: {}", tag.getName(), e.getMessage());
-            eventLogService.logError("OpcUaClient", "Ошибка записи тега " + tag.getName(), e, tag, null);
-            return new CommandOutcome(false, CommandStatus.FAILED_WRITE, "Ошибка записи: " + e.getMessage(), null);
-        }
-    }
-
-    /**
-     * A6: запись по Modbus. Симметрична чтению (holding-регистры, адрес −40001,
-     * FLOAT little-endian по словам). BOOLEAN/INT → один регистр (FC06),
-     * FLOAT → два регистра (FC16). У Modbus нет понятия sourceTime и «not writable»
-     * на уровне узла, поэтому исходы грубее OPC UA: TYPE_MISMATCH / NO_CONNECTION /
-     * WRITE.
-     */
-    private CommandOutcome writeModbus(TagEntity tag, Object value, String dataType) {
-        ControllerEntity ctrl = tag.getController();
-        if (ctrl == null || ctrl.getEndpoint() == null) {
-            return new CommandOutcome(false, CommandStatus.FAILED_NO_CONNECTION, "Контроллер не задан", null);
-        }
-        if (tag.getModbusAddress() == null) {
-            return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "У тега нет Modbus-адреса", null);
-        }
-        String host = extractModbusHost(ctrl.getEndpoint());
-        int port = extractModbusPort(ctrl.getEndpoint(), 502);
-        int addr = tag.getModbusAddress();
-        int unitId = tag.getModbusUnitId();
-        String dt = dataType != null ? dataType : tag.getDataType();
-
-        try {
-            if ("FLOAT".equalsIgnoreCase(dt)) {
-                modbusClientService.writeFloat(host, port, addr, unitId, toFloat(value));
-            } else if ("INT".equalsIgnoreCase(dt) || "INT16".equalsIgnoreCase(dt)) {
-                modbusClientService.writeRegister(host, port, addr, unitId, toInt(value) & 0xFFFF);
-            } else if ("BOOLEAN".equalsIgnoreCase(dt)) {
-                modbusClientService.writeRegister(host, port, addr, unitId, toBool(value) ? 1 : 0);
-            } else {
-                return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
-                        "Неизвестный тип Modbus-тега: " + dt, null);
-            }
-        } catch (NumberFormatException | ClassCastException e) {
-            return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
-                    "Значение не приводится к типу тега: " + e.getMessage(), null);
-        } catch (java.io.IOException e) {
-            return new CommandOutcome(false, CommandStatus.FAILED_NO_CONNECTION,
-                    "Нет связи с контроллером: " + e.getMessage(), null);
-        } catch (Exception e) {
-            log.error("Ошибка записи Modbus-тега {}: {}", tag.getName(), e.getMessage());
-            eventLogService.logError("ModbusClient", "Ошибка записи тега " + tag.getName(), e, tag, null);
-            return new CommandOutcome(false, CommandStatus.FAILED_WRITE, "Ошибка записи Modbus: " + e.getMessage(), null);
-        }
-
-        log.info("✍ Modbus записано {} = {} (addr {})", tag.getName(), value, addr);
-        eventLogService.logEvent("COMMAND_APPLIED", "ModbusClient", "INFO",
-                String.format("Записано %s = %s", tag.getName(), value),
-                Map.of("tagName", tag.getName(), "value", String.valueOf(value)));
-        return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
-    }
-
-    /** Классификация неудачного StatusCode записи в фиксированный перечень исходов (A5). */
-    private CommandStatus classifyBadStatus(StatusCode status) {
-        long code = status.getValue();
-        if (code == StatusCodes.Bad_NotWritable || code == StatusCodes.Bad_WriteNotSupported) {
-            return CommandStatus.REJECTED_NOT_WRITABLE;
-        }
-        if (code == StatusCodes.Bad_TypeMismatch || code == StatusCodes.Bad_OutOfRange) {
-            return CommandStatus.REJECTED_TYPE_MISMATCH;
-        }
-        return CommandStatus.FAILED_WRITE;
-    }
-
-    /**
-     * Запись значения по ИМЕНИ канала (полному пути узла). Так тег адресует
-     * scada-editor runtime: имя канала — это и Kafka-key телеметрии, и tag_id
-     * в редакторе, поэтому внешнему монитору не нужна нумерация тегов шлюза.
-     */
-    public CommandOutcome writeTagByName(String tagName, Object value, String dataType) {
-        TagEntity tag = tagName == null ? null : tagsByName.get(tagName);
-        if (tag == null) {
-            return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "Тег не найден по имени: " + tagName, null);
-        }
-        return writeTag(tag.getId(), value, dataType);
-    }
-
-    /** Конвертация значения команды в OPC UA Variant нужного типа. */
-    private Variant toVariant(String dataType, Object value) {
-        String dt = dataType == null ? "" : dataType.trim().toUpperCase();
-        if (dt.startsWith("BOOL")) return new Variant(toBool(value));
-        if (dt.startsWith("INT"))  return new Variant(toInt(value));
-        if (dt.startsWith("FLOAT") || dt.startsWith("REAL")) return new Variant(toFloat(value));
-        if (dt.startsWith("DOUBLE")) return new Variant(toDouble(value));
-        return new Variant(value);
-    }
-
-    private Boolean toBool(Object v) {
-        if (v instanceof Boolean b) return b;
-        if (v instanceof Number n) return n.doubleValue() != 0.0;
-        return Boolean.parseBoolean(String.valueOf(v).trim());
-    }
-
-    private Integer toInt(Object v) {
-        if (v instanceof Number n) return n.intValue();
-        return Integer.parseInt(String.valueOf(v).trim());
-    }
-
-    private Float toFloat(Object v) {
-        if (v instanceof Number n) return n.floatValue();
-        return Float.parseFloat(String.valueOf(v).trim());
-    }
-
-    private Double toDouble(Object v) {
-        if (v instanceof Number n) return n.doubleValue();
-        return Double.parseDouble(String.valueOf(v).trim());
-    }
-
-    /**
-     * Фиксированный перечень исходов команды записи (A5). Даёт оператору различить
-     * ошибку конфигурации («канала нет») от эксплуатационной («нет связи») без
-     * парсинга текста message. На провод уходит .name().
-     */
-    public enum CommandStatus {
-        APPLIED,
-        REJECTED_UNKNOWN_TAG,
-        REJECTED_NOT_WRITABLE,
-        REJECTED_TYPE_MISMATCH,
-        REJECTED_PROTOCOL_UNSUPPORTED,
-        FAILED_NO_CONNECTION,
-        FAILED_WRITE
-    }
-
-    /** Исход записи тега для формирования CommandResultMessage. */
-    public static final class CommandOutcome {
-        public final boolean success;
-        public final CommandStatus status;
-        public final String message;
-        public final Object appliedValue;
-
-        public CommandOutcome(boolean success, CommandStatus status, String message, Object appliedValue) {
-            this.success = success;
-            this.status = status;
-            this.message = message;
-            this.appliedValue = appliedValue;
-        }
-    }
-
-    /** Собрать (не сохраняя) сущность телеметрии для батч-вставки. */
     /** Момент снятия значения: sourceTime сервера, иначе serverTime, иначе now (A2). */
     private Instant sourceTimeOf(DataValue dv) {
         if (dv != null) {
@@ -998,68 +578,6 @@ public class OpcUaClientServiceDB {
             if (srv != null && !srv.isNull()) return srv.getJavaInstant();
         }
         return Instant.now();
-    }
-
-    private TelemetryEntity buildTelemetry(TagEntity tag, Object value, String quality, Instant timestamp) {
-        TelemetryEntity t = new TelemetryEntity();
-        t.setTagId(tag.getId());
-        t.setTime(timestamp);
-        t.setQuality(quality);
-        if (value instanceof Number) {
-            t.setValue(((Number) value).doubleValue());
-        } else if (value instanceof Boolean) {
-            t.setValue(((Boolean) value) ? 1.0 : 0.0);
-        } else if (value != null) {
-            t.setValueString(value.toString());
-        }
-        return t;
-    }
-
-    /** Батч-запись точек цикла: saveAll = ОДНА транзакция вместо N отдельных коммитов. */
-    private void flushTelemetry(List<TelemetryEntity> batch) {
-        try {
-            telemetryRepository.saveAll(batch);
-        } catch (Exception e) {
-            log.error("DB batch save error ({} точек): {}", batch.size(), e.getMessage());
-            eventLogService.logError("Database", "Failed to batch-save telemetry", e, null, null);
-        }
-    }
-
-    private Object extractValue(Variant variant) {
-        if (variant == null || variant.isNull()) return null;
-
-        Object v = variant.getValue();
-
-        if (v instanceof UInteger) {
-            return ((UInteger) v).longValue();
-        }
-
-        return v;
-    }
-
-    private String extractModbusHost(String endpoint) {
-        try {
-            String s = endpoint.replace("modbus://", "");
-            if (s.contains(":")) {
-                return s.split(":")[0];
-            }
-            return s;
-        } catch (Exception e) {
-            return "127.0.0.1";
-        }
-    }
-
-    private int extractModbusPort(String endpoint, int defaultPort) {
-        try {
-            String s = endpoint.replace("modbus://", "");
-            String[] parts = s.split(":");
-            if (parts.length > 1) {
-                return Integer.parseInt(parts[1]);
-            }
-            return defaultPort;
-        } catch (Exception e) {
-            return defaultPort;
-        }
     }
 
     @PreDestroy

@@ -30,13 +30,20 @@ spring:
   
   jpa:
     hibernate:
-      ddl-auto: update
+      # Схемой теперь владеет Flyway; Hibernate только СВЕРЯЕТ (validate), не меняет.
+      ddl-auto: validate
     show-sql: false
     open-in-view: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: false
+
+  # Flyway владеет схемой (миграции db/migration/Vn__*.sql). baseline-on-migrate: на
+  # СУЩЕСТВУЮЩЕЙ БД (создана Hibernate) ставит baseline V1 и НЕ гоняет V1 повторно;
+  # на ПУСТОЙ БД гоняет V1 с нуля. Дальше схему меняем только новыми Vn-миграциями.
+  flyway:
+    baseline-on-migrate: true
   
   kafka:
     bootstrap-servers: localhost:9092

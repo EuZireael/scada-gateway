@@ -3,8 +3,8 @@ package com.scada.gateway.kafka;
 import com.scada.gateway.kafka.dto.CommandMessage;
 import com.scada.gateway.kafka.dto.CommandResultMessage;
 import com.scada.gateway.kafka.producer.CommandResultProducer;
-import com.scada.gateway.opcua.OpcUaClientServiceDB;
-import com.scada.gateway.opcua.OpcUaClientServiceDB.CommandOutcome;
+import com.scada.gateway.command.CommandOutcome;
+import com.scada.gateway.command.CommandService;
 import com.scada.gateway.service.EventLogService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,7 +27,7 @@ public class CommandConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(CommandConsumer.class);
 
-    private final OpcUaClientServiceDB opcUaClientService;
+    private final CommandService commandService;
     private final CommandResultProducer resultProducer;
     private final EventLogService eventLogService;
 
@@ -43,10 +43,10 @@ public class CommandConsumer {
                 }
             });
 
-    public CommandConsumer(OpcUaClientServiceDB opcUaClientService,
+    public CommandConsumer(CommandService commandService,
                            CommandResultProducer resultProducer,
                            EventLogService eventLogService) {
-        this.opcUaClientService = opcUaClientService;
+        this.commandService = commandService;
         this.resultProducer = resultProducer;
         this.eventLogService = eventLogService;
     }
@@ -77,8 +77,8 @@ public class CommandConsumer {
                 cmd.getTagName(), cmd.getTagId(), cmd.getValue(), cmd.getRequestedBy());
 
         CommandOutcome outcome = hasId
-                ? opcUaClientService.writeTag(cmd.getTagId(), cmd.getValue(), cmd.getDataType())
-                : opcUaClientService.writeTagByName(cmd.getTagName(), cmd.getValue(), cmd.getDataType());
+                ? commandService.writeTag(cmd.getTagId(), cmd.getValue(), cmd.getDataType())
+                : commandService.writeTagByName(cmd.getTagName(), cmd.getValue(), cmd.getDataType());
 
         CommandResultMessage result = new CommandResultMessage();
         result.setCommandId(cmd.getCommandId());
