@@ -9,9 +9,8 @@ import com.scada.gateway.service.ConfigurationService;
 import com.scada.gateway.repository.TelemetryRepository;
 import com.scada.gateway.kafka.producer.TelemetryProducer;
 import com.scada.gateway.kafka.producer.AlarmProducer;
-import com.scada.gateway.command.CommandOutcome;
-import com.scada.gateway.command.CommandStatus;
-import com.scada.gateway.command.CommandStatusClassifier;
+import com.scada.gateway.command.OpcUaClientRegistry;
+import com.scada.gateway.command.TagCatalog;
 import com.scada.gateway.modbus.ModbusClientService;
 import com.scada.gateway.modbus.ModbusEndpoint;
 import com.scada.gateway.service.EventLogService;
@@ -39,7 +38,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 @Service
-public class OpcUaClientServiceDB {
+public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(OpcUaClientServiceDB.class);
 
@@ -765,145 +764,22 @@ public class OpcUaClientServiceDB {
                 Map.of("tagId", tag.getId(), "tagName", tag.getName(), "alarmId", active.alarmId));
     }
 
-    /**
-     * Запись значения в тег ПЛК по OPC UA (команда управления от Monitor Srv).
-     * Возвращает исход для отправки результата обратно в Monitor.
-     */
-    public CommandOutcome writeTag(Long tagId, Object value, String dataType) {
-        TagEntity tag = tagCache.get(tagId);
-        if (tag == null) {
-            return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "Тег не найден: " + tagId, null);
-        }
-        // Доступ к записи — как у реального ПЛК: показание датчика (давление, расход)
-        // изменить нельзя, только команду актуатора (клапан/мотор/DO). Отклоняем ДО
-        // похода в контроллер: для OPC UA это экономит round-trip до Bad_NotWritable,
-        // для Modbus — ЕДИНСТВЕННАЯ защита (у holding-регистра нет признака «только
-        // чтение», без этой проверки регистр датчика молча перезапишется).
-        if (!tag.isWritable()) {
-            return new CommandOutcome(false, CommandStatus.REJECTED_NOT_WRITABLE,
-                    "Тег только для чтения (датчик), запись запрещена: " + tag.getName(), null);
-        }
-        // Маршрутизация по протоколу — деталь реализации шлюза, наружу не торчит (A6).
-        // Запись реализована для OPC UA и Modbus; иной протокол → PROTOCOL_UNSUPPORTED.
-        if (TagProtocols.isOpcUaTag(tag)) {
-            return writeOpcUa(tag, value, dataType);
-        }
-        if (TagProtocols.isModbusTag(tag)) {
-            return writeModbus(tag, value, dataType);
-        }
-        String proto = tag.getProtocol() != null ? tag.getProtocol() : "неизвестный";
-        return new CommandOutcome(false, CommandStatus.REJECTED_PROTOCOL_UNSUPPORTED,
-                "Запись не реализована для протокола: " + proto, null);
+    // --- Порты для CommandService (DIP): god-класс — владелец живых карт (кэш тегов,
+    // OPC UA-клиенты), поэтому отдаёт их только на ЧТЕНИЕ. Сама логика записи
+    // (writeTag/writeOpcUa/writeModbus) переехала в com.scada.gateway.command.CommandService.
+    @Override
+    public TagEntity byId(Long id) {
+        return id == null ? null : tagCache.get(id);
     }
 
-    /** Запись по OPC UA. */
-    private CommandOutcome writeOpcUa(TagEntity tag, Object value, String dataType) {
-        Long controllerId = tag.getController() != null ? tag.getController().getId() : null;
-        OpcUaClient client = controllerId != null ? opcClients.get(controllerId) : null;
-        if (client == null) {
-            return new CommandOutcome(false, CommandStatus.FAILED_NO_CONNECTION, "Контроллер не подключён", null);
-        }
-
-        // Приведение типа — ОТДЕЛЬНО от записи: ошибка конвертации значения к типу тега
-        // это ошибка данных/конфигурации (REJECTED_TYPE_MISMATCH), а не сбой связи.
-        NodeId nodeId;
-        Variant variant;
-        try {
-            nodeId = NodeId.parse(tag.getNodeId());
-            String dt = dataType != null ? dataType : tag.getDataType();
-            variant = ValueCodec.toVariant(dt, value);
-        } catch (Exception e) {
-            log.warn("Значение '{}' не приводится к типу тега {}: {}", value, tag.getName(), e.getMessage());
-            return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
-                    "Значение не приводится к типу тега: " + e.getMessage(), null);
-        }
-
-        try {
-            // status/time = null: их проставляет сервер (канон milo для записи).
-            DataValue dataValue = new DataValue(variant, null, null);
-            // Таймаут: без него зависшая запись вешает поток консьюмера команд навсегда.
-            StatusCode status = client.writeValue(nodeId, dataValue).get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS);
-
-            if (status.isGood()) {
-                log.info("✍ OPC UA записано {} = {} (tag {})", tag.getName(), variant.getValue(), tag.getId());
-                eventLogService.logEvent("COMMAND_APPLIED", "OpcUaClient", "INFO",
-                        String.format("Записано %s = %s", tag.getName(), value),
-                        Map.of("tagId", tag.getId(), "value", String.valueOf(value)));
-                return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
-            }
-            // Разбор неудачного StatusCode на осмысленные для оператора исходы.
-            return new CommandOutcome(false, CommandStatusClassifier.classify(status),
-                    "OPC UA отклонил запись: " + status, null);
-
-        } catch (Exception e) {
-            log.error("Ошибка записи тега {}: {}", tag.getName(), e.getMessage());
-            eventLogService.logError("OpcUaClient", "Ошибка записи тега " + tag.getName(), e, tag, null);
-            return new CommandOutcome(false, CommandStatus.FAILED_WRITE, "Ошибка записи: " + e.getMessage(), null);
-        }
+    @Override
+    public TagEntity byName(String name) {
+        return name == null ? null : tagsByName.get(name);
     }
 
-    /**
-     * A6: запись по Modbus. Симметрична чтению (holding-регистры, адрес −40001,
-     * FLOAT little-endian по словам). BOOLEAN/INT → один регистр (FC06),
-     * FLOAT → два регистра (FC16). У Modbus нет понятия sourceTime и «not writable»
-     * на уровне узла, поэтому исходы грубее OPC UA: TYPE_MISMATCH / NO_CONNECTION /
-     * WRITE.
-     */
-    private CommandOutcome writeModbus(TagEntity tag, Object value, String dataType) {
-        ControllerEntity ctrl = tag.getController();
-        if (ctrl == null || ctrl.getEndpoint() == null) {
-            return new CommandOutcome(false, CommandStatus.FAILED_NO_CONNECTION, "Контроллер не задан", null);
-        }
-        if (tag.getModbusAddress() == null) {
-            return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "У тега нет Modbus-адреса", null);
-        }
-        String host = ModbusEndpoint.host(ctrl.getEndpoint());
-        int port = ModbusEndpoint.port(ctrl.getEndpoint(), 502);
-        int addr = tag.getModbusAddress();
-        int unitId = tag.getModbusUnitId();
-        String dt = dataType != null ? dataType : tag.getDataType();
-
-        try {
-            if ("FLOAT".equalsIgnoreCase(dt)) {
-                modbusClientService.writeFloat(host, port, addr, unitId, ValueCodec.toFloat(value));
-            } else if ("INT".equalsIgnoreCase(dt) || "INT16".equalsIgnoreCase(dt)) {
-                modbusClientService.writeRegister(host, port, addr, unitId, ValueCodec.toInt(value) & 0xFFFF);
-            } else if ("BOOLEAN".equalsIgnoreCase(dt)) {
-                modbusClientService.writeRegister(host, port, addr, unitId, ValueCodec.toBool(value) ? 1 : 0);
-            } else {
-                return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
-                        "Неизвестный тип Modbus-тега: " + dt, null);
-            }
-        } catch (NumberFormatException | ClassCastException e) {
-            return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
-                    "Значение не приводится к типу тега: " + e.getMessage(), null);
-        } catch (java.io.IOException e) {
-            return new CommandOutcome(false, CommandStatus.FAILED_NO_CONNECTION,
-                    "Нет связи с контроллером: " + e.getMessage(), null);
-        } catch (Exception e) {
-            log.error("Ошибка записи Modbus-тега {}: {}", tag.getName(), e.getMessage());
-            eventLogService.logError("ModbusClient", "Ошибка записи тега " + tag.getName(), e, tag, null);
-            return new CommandOutcome(false, CommandStatus.FAILED_WRITE, "Ошибка записи Modbus: " + e.getMessage(), null);
-        }
-
-        log.info("✍ Modbus записано {} = {} (addr {})", tag.getName(), value, addr);
-        eventLogService.logEvent("COMMAND_APPLIED", "ModbusClient", "INFO",
-                String.format("Записано %s = %s", tag.getName(), value),
-                Map.of("tagName", tag.getName(), "value", String.valueOf(value)));
-        return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
-    }
-
-    /**
-     * Запись значения по ИМЕНИ канала (полному пути узла). Так тег адресует
-     * scada-editor runtime: имя канала — это и Kafka-key телеметрии, и tag_id
-     * в редакторе, поэтому внешнему монитору не нужна нумерация тегов шлюза.
-     */
-    public CommandOutcome writeTagByName(String tagName, Object value, String dataType) {
-        TagEntity tag = tagName == null ? null : tagsByName.get(tagName);
-        if (tag == null) {
-            return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG, "Тег не найден по имени: " + tagName, null);
-        }
-        return writeTag(tag.getId(), value, dataType);
+    @Override
+    public OpcUaClient forController(Long controllerId) {
+        return controllerId == null ? null : opcClients.get(controllerId);
     }
 
     /** Собрать (не сохраняя) сущность телеметрии для батч-вставки. */
