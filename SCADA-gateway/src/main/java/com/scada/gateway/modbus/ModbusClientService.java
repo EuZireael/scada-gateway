@@ -202,6 +202,48 @@ public class ModbusClientService {
     }
 
     /**
+     * БЛОК holding-регистров одной транзакцией FC03. Основа батч-чтения: вместо N
+     * запросов по тегу читаем непрерывный блок и режем на значения на стороне вызова.
+     * {@code startRegister} — уже 0-based (адрес 40001 → 0), {@code count} ≤ 125 (лимит FC03).
+     * Возвращает сырые регистры (0..65535) или null при ошибке/обрыве (весь блок = BAD).
+     */
+    public int[] readHoldingRegisters(String host, int port, int startRegister, int count, int unitId) {
+        String key = host + ":" + port;
+        TCPMasterConnection connection = getConnection(key, host, port);
+        if (connection == null) {
+            return null;
+        }
+        try {
+            synchronized (connection) {
+                if (!connection.isConnected()) {
+                    connection.connect();
+                }
+                ReadMultipleRegistersRequest request =
+                        new ReadMultipleRegistersRequest(startRegister, count);
+                request.setUnitID(unitId);
+                ModbusTCPTransaction transaction = new ModbusTCPTransaction(connection);
+                transaction.setRequest(request);
+                transaction.execute();
+                ReadMultipleRegistersResponse response =
+                        (ReadMultipleRegistersResponse) transaction.getResponse();
+                if (response == null || response.getWordCount() < count) {
+                    return null;
+                }
+                int[] regs = new int[count];
+                for (int i = 0; i < count; i++) {
+                    regs[i] = response.getRegisterValue(i);
+                }
+                reportOk(key);
+                return regs;
+            }
+        } catch (Exception e) {
+            reportFailure(key, e.getMessage());
+            resetConnection(key, connection);
+            return null;
+        }
+    }
+
+    /**
      * Запись одного holding-регистра (FC06) — для INT16 и BOOLEAN (0/1).
      * Симметрично чтению: адрес 40001 → 0. При ошибке бросает (в отличие от чтения,
      * которое в горячем цикле возвращает null): команд единицы, причина отказа нужна

@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import com.scada.gateway.command.OpcUaClientRegistry;
 import com.scada.gateway.command.TagCatalog;
+import com.scada.gateway.modbus.ModbusBatchReader;
 import com.scada.gateway.modbus.ModbusClientService;
 import com.scada.gateway.modbus.ModbusEndpoint;
 import com.scada.gateway.service.EventLogService;
@@ -43,6 +44,7 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
 
     private final ConfigurationService configurationService;
     private final ModbusClientService modbusClientService;
+    private final ModbusBatchReader modbusBatchReader;
     private final EventLogService eventLogService;
     private final TelemetryProcessor telemetryProcessor;
 
@@ -93,12 +95,14 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
 
     public OpcUaClientServiceDB(ConfigurationService configurationService,
                                 ModbusClientService modbusClientService,
+                                ModbusBatchReader modbusBatchReader,
                                 EventLogService eventLogService,
                                 com.scada.gateway.kafka.producer.EventProducer eventProducer,
                                 TelemetryProcessor telemetryProcessor,
                                 MeterRegistry meterRegistry) {
         this.configurationService = configurationService;
         this.modbusClientService = modbusClientService;
+        this.modbusBatchReader = modbusBatchReader;
         this.eventLogService = eventLogService;
         this.eventProducer = eventProducer;
         this.telemetryProcessor = telemetryProcessor;
@@ -495,47 +499,23 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
                     // Буфер точек цикла: одна saveAll в конце = одна транзакция вместо N коммитов.
                     List<TelemetryEntity> batch = persistTelemetry ? new ArrayList<>() : null;
 
+                    // Батч-чтение: собираем enabled Modbus-теги и читаем блоками регистров
+                    // (~30 FC03 вместо 1877 пер-теговых запросов). См. ModbusBatchReader.
+                    List<TagEntity> mbTags = new ArrayList<>();
                     for (TagEntity tag : tags) {
                         if (!tag.isEnabled() || !TagProtocols.isModbusTag(tag)) continue;
-
-                        try {
-                            Object value = null;
-
-                            if ("FLOAT".equalsIgnoreCase(tag.getDataType())) {
-                                value = modbusClientService.readFloat(
-                                    host, port,
-                                    tag.getModbusAddress(),
-                                    tag.getModbusUnitId()
-                                );
-                            } else if ("INT".equalsIgnoreCase(tag.getDataType()) || "INT16".equalsIgnoreCase(tag.getDataType())) {
-                                value = modbusClientService.readInt16(
-                                    host, port,
-                                    tag.getModbusAddress(),
-                                    tag.getModbusUnitId()
-                                );
-                            } else if ("BOOLEAN".equalsIgnoreCase(tag.getDataType())) {
-                                Integer intVal = modbusClientService.readInt16(
-                                    host, port,
-                                    tag.getModbusAddress(),
-                                    tag.getModbusUnitId()
-                                );
-                                value = intVal != null && intVal != 0;
-                            }
-
-                            String quality = value != null ? "GOOD" : "BAD";
-                            if (value != null) goodReads++; else badReads++;
-                            // A2: у Modbus источника времени в протоколе нет — ставим момент
-                            // завершения чтения регистра, не момент отправки в Kafka.
-                            telemetryProcessor.processTagValue(tag, value, quality, Instant.now(), batch);
-
-                        } catch (Exception e) {
-                            // Пер-теговый лог не пишем; состояние связи — на уровне цикла.
-                            badReads++;
-                            lastErr = e.getMessage();
-                            telemetryProcessor.processTagValue(tag, null, "BAD", Instant.now(), batch);
-                        }
-
+                        mbTags.add(tag);
                         cycleDelay = Math.min(cycleDelay, Math.max(tag.getPollingRate(), 100L));
+                    }
+                    // unitId общий для контроллера (в конфиге один на всех тегах).
+                    int unitId = mbTags.isEmpty() ? 1 : mbTags.get(0).getModbusUnitId();
+                    for (ModbusBatchReader.Reading r : modbusBatchReader.read(host, port, unitId, mbTags)) {
+                        Object value = r.value();
+                        if (value != null) goodReads++; else badReads++;
+                        if (value == null && lastErr == null) lastErr = "Modbus block read failed";
+                        // A2: у Modbus источника времени в протоколе нет — момент завершения чтения.
+                        telemetryProcessor.processTagValue(r.tag(), value,
+                                value != null ? "GOOD" : "BAD", Instant.now(), batch);
                     }
 
                     if (batch != null && !batch.isEmpty()) telemetryProcessor.flushTelemetry(batch);
