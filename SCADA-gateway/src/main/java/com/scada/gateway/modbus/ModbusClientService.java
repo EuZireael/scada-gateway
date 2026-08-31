@@ -11,6 +11,7 @@ import com.ghgande.j2mod.modbus.procimg.SimpleRegister;
 import com.ghgande.j2mod.modbus.net.TCPMasterConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -21,6 +22,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ModbusClientService {
 
     private static final Logger log = LoggerFactory.getLogger(ModbusClientService.class);
+
+    /**
+     * Явный таймаут (мс) на connect И на чтение транзакции j2mod. У j2mod есть неявный
+     * дефолт 3000 мс, но полагаться на дефолт библиотеки — хрупко: он невидим и
+     * ненастраиваем. Задаём явно и делаем конфигурируемым (как gateway.opcua-op-timeout-ms).
+     */
+    @Value("${gateway.modbus-op-timeout-ms:3000}")
+    private int modbusTimeoutMs;
 
     private final ConcurrentHashMap<String, TCPMasterConnection> connections = new ConcurrentHashMap<>();
 
@@ -294,6 +303,8 @@ public class ModbusClientService {
             InetAddress addr = InetAddress.getByName(host);
             TCPMasterConnection connection = new TCPMasterConnection(addr);
             connection.setPort(port);
+            // Явный таймаут на connect+чтение — не полагаемся на неявный дефолт j2mod.
+            connection.setTimeout(modbusTimeoutMs);
             connection.connect();
             log.info("✅ Connected to Modbus {}:{}", host, port);
             connections.put(key, connection);
