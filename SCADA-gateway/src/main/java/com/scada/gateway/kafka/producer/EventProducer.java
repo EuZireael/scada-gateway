@@ -20,6 +20,10 @@ import java.util.concurrent.CompletableFuture;
  * не уходили — топик scada-events был пустым, и Monitor Srv не получал
  * ни одного события. Этот продюсер закрывает пробел.
  */
+/**
+ * Продюсер событий шлюза в Kafka (топик scada-events): смена связи/качества,
+ * системные и прочие события из EventLogService — для мониторинга и аудита.
+ */
 @Service
 public class EventProducer {
 

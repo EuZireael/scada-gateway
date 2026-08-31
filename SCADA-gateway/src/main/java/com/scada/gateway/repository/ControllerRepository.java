@@ -6,6 +6,10 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Spring Data JPA репозиторий контроллеров (таблица controllers).
+ * findByEnabledTrue — включённые контроллеры для опроса.
+ */
 @Repository
 public interface ControllerRepository extends JpaRepository<ControllerEntity, Long> {
     List<ControllerEntity> findByEnabledTrue();

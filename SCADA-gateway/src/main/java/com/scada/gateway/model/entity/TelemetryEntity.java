@@ -3,6 +3,10 @@ package com.scada.gateway.model.entity;
 import jakarta.persistence.*;
 import java.time.Instant;
 
+/**
+ * JPA-сущность точки телеметрии (таблица telemetry): значение тега + качество + время.
+ * Локальная история шлюза; пишется батчем в конце цикла опроса при persist-telemetry.
+ */
 @Entity
 @Table(name = "telemetry")
 public class TelemetryEntity {

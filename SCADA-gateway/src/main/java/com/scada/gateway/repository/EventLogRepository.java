@@ -8,6 +8,10 @@ import org.springframework.stereotype.Repository;
 import java.time.Instant;
 import java.util.List;
 
+/**
+ * Spring Data JPA репозиторий журнала событий (таблица event_log). Финдеры по типу,
+ * важности и тегу — для REST-эндпоинтов мониторинга.
+ */
 @Repository
 public interface EventLogRepository extends JpaRepository<EventLogEntity, Long> {
     

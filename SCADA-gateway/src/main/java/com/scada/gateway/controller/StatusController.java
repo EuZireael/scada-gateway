@@ -8,6 +8,9 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * REST-эндпоинт сводного статуса шлюза — быстрая проверка состояния одним запросом.
+ */
 @RestController
 @RequestMapping("/api/status")
 public class StatusController {

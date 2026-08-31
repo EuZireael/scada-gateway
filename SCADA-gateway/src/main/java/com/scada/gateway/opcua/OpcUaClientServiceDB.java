@@ -37,6 +37,22 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 
+/**
+ * Ядро шлюза: жизненный цикл соединений с контроллерами и опрос («connection/polling
+ * engine»).
+ *
+ * <p>Поднимает и держит соединения OPC UA (Milo) и Modbus, ведёт супервизор
+ * авто-переподключения (superviseConnections + токен поколения опроса против flapping)
+ * и два цикла опроса: OPC UA — батч-чтением одним read на контроллер; Modbus — через
+ * {@link com.scada.gateway.modbus.ModbusBatchReader}. Снятые значения отдаёт в
+ * {@link com.scada.gateway.telemetry.TelemetryProcessor}, отдаёт метрики связи.
+ *
+ * <p>Реализует порты {@link com.scada.gateway.command.TagCatalog} и
+ * {@link com.scada.gateway.command.OpcUaClientRegistry} (владелец живых карт тегов и
+ * OPC UA-клиентов) для CommandService. Остальные обязанности вынесены в отдельные
+ * классы: конвертация — ValueCodec, команды — CommandService, алармы — AlarmEvaluator,
+ * телеметрия — TelemetryProcessor.
+ */
 @Service
 public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
 

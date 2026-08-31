@@ -17,6 +17,10 @@ import org.springframework.kafka.support.serializer.JsonDeserializer;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Конфигурация Kafka: объявляет топики шлюза (телеметрия / алармы / события /
+ * команды) бинами NewTopic — Spring создаёт их при старте, если брокер позволяет.
+ */
 @Configuration
 public class KafkaConfig {
 

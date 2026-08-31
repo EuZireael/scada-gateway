@@ -13,6 +13,11 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * Продюсер телеметрии в Kafka (топик scada.tags): значение тега + качество + время.
+ * sendTelemetry — по тегу; sendFieldTelemetry — по полю прибора (record-режим).
+ * Основной выход данных шлюза наружу (его слушает монитор).
+ */
 @Service
 public class TelemetryProducer {
 

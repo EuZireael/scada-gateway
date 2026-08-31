@@ -5,6 +5,10 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * JPA-сущность контроллера (таблица controllers): endpoint (OPC UA opc.tcp / Modbus),
+ * включённость, учётка, политика безопасности. Владеет тегами (1:N).
+ */
 @Entity
 @Table(name = "controllers")
 public class ControllerEntity {

@@ -13,6 +13,10 @@ import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * Продюсер алармов в Kafka (топик scada-alarms). Публикует edge-триггерные алармы
+ * от AlarmEvaluator: выход значения за порог и возврат в норму (cleared).
+ */
 @Service
 public class AlarmProducer {
 

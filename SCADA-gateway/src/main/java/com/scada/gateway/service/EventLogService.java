@@ -16,6 +16,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Журнал событий шлюза. Типизированные методы (logSystem/logEvent/logConnection/
+ * logAlarm/logError) пишут запись в таблицу event_log — единая точка аудита связи,
+ * качества, алармов и ошибок.
+ */
 @Service
 public class EventLogService {
 

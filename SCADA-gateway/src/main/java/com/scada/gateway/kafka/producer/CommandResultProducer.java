@@ -11,6 +11,10 @@ import org.springframework.stereotype.Service;
  * Публикует результат выполнения команды в Kafka-топик scada-command-results.
  * Потребитель — Monitor Srv, который доставляет результат в UI по WebSocket.
  */
+/**
+ * Продюсер результатов команд в Kafka (топик scada-command-results): исход записи
+ * (APPLIED / REJECTED_* / FAILED_*) отправляется обратно монитору после writeTag.
+ */
 @Service
 public class CommandResultProducer {
 

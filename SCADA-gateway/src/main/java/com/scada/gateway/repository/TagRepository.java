@@ -6,6 +6,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 import java.util.List;
 
+/**
+ * Spring Data JPA репозиторий тегов (таблица tags). Финдеры по контроллеру и
+ * включённости — для опроса и загрузки конфигурации.
+ */
 @Repository
 public interface TagRepository extends JpaRepository<TagEntity, Long> {
     List<TagEntity> findByControllerId(Long controllerId);

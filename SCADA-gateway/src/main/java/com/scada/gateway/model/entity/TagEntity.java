@@ -4,6 +4,12 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.time.LocalDateTime;
 
+/**
+ * JPA-сущность тега/канала (таблица tags). Адресация: nodeId (OPC UA) либо
+ * modbusAddress/unitId (Modbus). Несёт тип, пороги min/max, writable (актуатор vs
+ * датчик), привязку к прибору (deviceName/fieldName, fieldsJson) и каналу монитора
+ * (channelId). isOpcUa()/isModbus() — быстрая проверка протокола по полю protocol.
+ */
 @Entity
 @Table(name = "tags")
 public class TagEntity {

@@ -4,6 +4,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import java.util.List;
 
+/**
+ * Биндинг конфигурации контроллеров и тегов из controllers.yaml (префикс "opcua").
+ * Вложенные классы описывают сервер (OPC UA/Modbus endpoint) и его теги; из этой
+ * структуры ConfigurationService засевает БД при старте.
+ */
 @Component
 @ConfigurationProperties(prefix = "opcua")
 public class OpcUaConfig {

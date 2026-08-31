@@ -8,6 +8,10 @@ import org.springframework.stereotype.Repository;
 import java.time.Instant;
 import java.util.List;
 
+/**
+ * Spring Data JPA репозиторий телеметрии (таблица telemetry). saveAll — батч-вставка
+ * точек цикла; финдеры для истории значений по тегу и интервалу времени.
+ */
 @Repository
 public interface TelemetryRepository extends JpaRepository<TelemetryEntity, Long> {
     List<TelemetryEntity> findTop10ByTagIdOrderByTimeDesc(Long tagId);

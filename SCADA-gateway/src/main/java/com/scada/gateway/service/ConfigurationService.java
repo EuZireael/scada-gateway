@@ -23,6 +23,11 @@ import java.util.stream.Collectors;
 /**
  * Сервис для работы с конфигурацией из БД (без Lombok).
  */
+/**
+ * Мост между статическим конфигом и рантаймом. При старте засевает БД контроллерами
+ * и тегами из controllers.yaml (initDatabaseFromYaml, идемпотентно) и отдаёт их
+ * остальным сервисам (getAllControllers, getTagsForController, getAllActiveTags).
+ */
 @Service
 public class ConfigurationService {
 
