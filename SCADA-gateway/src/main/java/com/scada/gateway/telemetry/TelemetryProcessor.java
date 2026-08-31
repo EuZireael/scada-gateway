@@ -8,6 +8,8 @@ import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.model.entity.TelemetryEntity;
 import com.scada.gateway.repository.TelemetryRepository;
 import com.scada.gateway.service.EventLogService;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,6 +39,7 @@ public class TelemetryProcessor {
     private final TelemetryRepository telemetryRepository;
     private final EventLogService eventLog;
     private final AlarmEvaluator alarmEvaluator;
+    private final Counter telemetrySent;
 
     /** Считать ли пороги/алармы в шлюзе. По умолчанию false — алармы считает Monitor. */
     @Value("${gateway.alarms.enabled:false}")
@@ -57,11 +60,13 @@ public class TelemetryProcessor {
     public TelemetryProcessor(TelemetryProducer telemetryProducer,
                               TelemetryRepository telemetryRepository,
                               EventLogService eventLog,
-                              AlarmEvaluator alarmEvaluator) {
+                              AlarmEvaluator alarmEvaluator,
+                              MeterRegistry meterRegistry) {
         this.telemetryProducer = telemetryProducer;
         this.telemetryRepository = telemetryRepository;
         this.eventLog = eventLog;
         this.alarmEvaluator = alarmEvaluator;
+        this.telemetrySent = meterRegistry.counter("scada.telemetry.sent.total");
     }
 
     /**
@@ -143,6 +148,7 @@ public class TelemetryProcessor {
 
         if (value != null) {
             telemetryProducer.sendTelemetry(tag, value, quality, timestamp);
+            telemetrySent.increment();
             // per-tag на каждый опрос — только debug (иначе поток INFO на 2471 тег/цикл).
             log.debug("📊 {} = {}", tag.getName(), value);
         } else {
@@ -151,6 +157,7 @@ public class TelemetryProcessor {
             // правок B2/C4). Состояние связи фиксирует markControllerDown на уровне цикла.
             if (sendBadFrames) {
                 telemetryProducer.sendTelemetry(tag, null, quality, timestamp);
+                telemetrySent.increment();
             }
             log.debug("⚠️ {} = NULL (quality: {})", tag.getName(), quality);
         }

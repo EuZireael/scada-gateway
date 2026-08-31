@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.2.4</version>
+        <version>3.5.16</version>
         <relativePath/>
     </parent>
 
@@ -50,6 +50,13 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- Prometheus-реестр: метрики на /actuator/prometheus (сбор Prometheus/Grafana). -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Spring Data JPA -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -64,11 +71,15 @@
         </dependency>
 
         <!-- Flyway: версионированные миграции схемы вместо ddl-auto=update.
-             Spring Boot 3.2.x тянет Flyway 9.x — поддержка Postgres в flyway-core,
-             отдельный модуль flyway-database-postgresql (Flyway 10+) не нужен. -->
+             Spring Boot 3.5 → Flyway 10, где поддержка каждой СУБД вынесена в свой
+             модуль — для Postgres обязателен flyway-database-postgresql. -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
         <!-- Spring Kafka -->

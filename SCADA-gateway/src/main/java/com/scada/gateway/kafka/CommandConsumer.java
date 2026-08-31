@@ -6,6 +6,7 @@ import com.scada.gateway.kafka.producer.CommandResultProducer;
 import com.scada.gateway.command.CommandOutcome;
 import com.scada.gateway.command.CommandService;
 import com.scada.gateway.service.EventLogService;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -30,6 +31,7 @@ public class CommandConsumer {
     private final CommandService commandService;
     private final CommandResultProducer resultProducer;
     private final EventLogService eventLogService;
+    private final MeterRegistry meterRegistry;
 
     // A7: окно недавних commandId для идемпотентности — Kafka at-least-once или двойная
     // доставка одной команды не должна писать в ПЛК дважды. Держим до DEDUP_MAX последних
@@ -45,10 +47,12 @@ public class CommandConsumer {
 
     public CommandConsumer(CommandService commandService,
                            CommandResultProducer resultProducer,
-                           EventLogService eventLogService) {
+                           EventLogService eventLogService,
+                           MeterRegistry meterRegistry) {
         this.commandService = commandService;
         this.resultProducer = resultProducer;
         this.eventLogService = eventLogService;
+        this.meterRegistry = meterRegistry;
     }
 
     @KafkaListener(
@@ -79,6 +83,9 @@ public class CommandConsumer {
         CommandOutcome outcome = hasId
                 ? commandService.writeTag(cmd.getTagId(), cmd.getValue(), cmd.getDataType())
                 : commandService.writeTagByName(cmd.getTagName(), cmd.getValue(), cmd.getDataType());
+
+        // Метрика: сколько команд и с каким исходом (APPLIED/REJECTED_*/FAILED_*).
+        meterRegistry.counter("scada.commands.total", "status", outcome.status.name()).increment();
 
         CommandResultMessage result = new CommandResultMessage();
         result.setCommandId(cmd.getCommandId());

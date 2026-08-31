@@ -6,6 +6,8 @@ import com.scada.gateway.model.entity.TelemetryEntity;
 import com.scada.gateway.model.TagProtocols;
 import com.scada.gateway.service.ConfigurationService;
 import com.scada.gateway.telemetry.TelemetryProcessor;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.scada.gateway.command.OpcUaClientRegistry;
 import com.scada.gateway.command.TagCatalog;
 import com.scada.gateway.modbus.ModbusClientService;
@@ -93,12 +95,19 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
                                 ModbusClientService modbusClientService,
                                 EventLogService eventLogService,
                                 com.scada.gateway.kafka.producer.EventProducer eventProducer,
-                                TelemetryProcessor telemetryProcessor) {
+                                TelemetryProcessor telemetryProcessor,
+                                MeterRegistry meterRegistry) {
         this.configurationService = configurationService;
         this.modbusClientService = modbusClientService;
         this.eventLogService = eventLogService;
         this.eventProducer = eventProducer;
         this.telemetryProcessor = telemetryProcessor;
+        // Метрики здоровья связи: читаются live из карт при каждом scrape /actuator/prometheus.
+        Gauge.builder("scada.controllers.connected", connected,
+                        m -> m.values().stream().filter(Boolean.TRUE::equals).count())
+                .description("Контроллеров на связи").register(meterRegistry);
+        Gauge.builder("scada.controllers.total", controllerById, java.util.Map::size)
+                .description("Всего сконфигурировано контроллеров").register(meterRegistry);
     }
 
     /**

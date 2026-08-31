@@ -6,6 +6,7 @@ import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.model.entity.TelemetryEntity;
 import com.scada.gateway.repository.TelemetryRepository;
 import com.scada.gateway.service.EventLogService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,7 +38,8 @@ class TelemetryProcessorTest {
 
     @BeforeEach
     void setUp() {
-        processor = new TelemetryProcessor(telemetryProducer, telemetryRepository, eventLog, alarmEvaluator);
+        processor = new TelemetryProcessor(telemetryProducer, telemetryRepository, eventLog, alarmEvaluator,
+                new SimpleMeterRegistry());
     }
 
     private static TagEntity tag() {
