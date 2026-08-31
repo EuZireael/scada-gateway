@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scada.gateway.model.entity.ControllerEntity;
 import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.model.entity.TelemetryEntity;
+import com.scada.gateway.model.TagProtocols;
 import com.scada.gateway.service.ConfigurationService;
 import com.scada.gateway.repository.TelemetryRepository;
 import com.scada.gateway.kafka.producer.TelemetryProducer;
@@ -432,7 +433,7 @@ public class OpcUaClientServiceDB {
                     List<ReadValueId> reads = new ArrayList<>();
                     long cycleDelay = 1000L;
                     for (TagEntity tag : allTags) {
-                        if (!tag.isEnabled() || !isOpcUaTag(tag)) continue;
+                        if (!tag.isEnabled() || !TagProtocols.isOpcUaTag(tag)) continue;
                         NodeId nodeId = nodeIdCache.computeIfAbsent(tag.getNodeId(), NodeId::parse);
                         opcTags.add(tag);
                         reads.add(new ReadValueId(nodeId, AttributeId.Value.uid(), null, QualifiedName.NULL_VALUE));
@@ -528,7 +529,7 @@ public class OpcUaClientServiceDB {
                     List<TelemetryEntity> batch = persistTelemetry ? new ArrayList<>() : null;
 
                     for (TagEntity tag : tags) {
-                        if (!tag.isEnabled() || !isModbusTag(tag)) continue;
+                        if (!tag.isEnabled() || !TagProtocols.isModbusTag(tag)) continue;
 
                         try {
                             Object value = null;
@@ -590,17 +591,6 @@ public class OpcUaClientServiceDB {
                 }
             }
         });
-    }
-
-    private boolean isOpcUaTag(TagEntity tag) {
-        if ("modbus".equalsIgnoreCase(tag.getProtocol())) return false;
-        return "OPCUA".equalsIgnoreCase(tag.getProtocol()) ||
-               (tag.getNodeId() != null && !tag.getNodeId().isEmpty());
-    }
-
-    private boolean isModbusTag(TagEntity tag) {
-        return "MODBUS".equalsIgnoreCase(tag.getProtocol()) || 
-               (tag.getModbusAddress() != null && tag.getModbusAddress() > 0);
     }
 
     private final ObjectMapper recordMapper = new ObjectMapper();
@@ -795,10 +785,10 @@ public class OpcUaClientServiceDB {
         }
         // Маршрутизация по протоколу — деталь реализации шлюза, наружу не торчит (A6).
         // Запись реализована для OPC UA и Modbus; иной протокол → PROTOCOL_UNSUPPORTED.
-        if (isOpcUaTag(tag)) {
+        if (TagProtocols.isOpcUaTag(tag)) {
             return writeOpcUa(tag, value, dataType);
         }
-        if (isModbusTag(tag)) {
+        if (TagProtocols.isModbusTag(tag)) {
             return writeModbus(tag, value, dataType);
         }
         String proto = tag.getProtocol() != null ? tag.getProtocol() : "неизвестный";
