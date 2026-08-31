@@ -8,7 +8,7 @@ import com.scada.gateway.model.TagProtocols;
 import com.scada.gateway.service.ConfigurationService;
 import com.scada.gateway.repository.TelemetryRepository;
 import com.scada.gateway.kafka.producer.TelemetryProducer;
-import com.scada.gateway.kafka.producer.AlarmProducer;
+import com.scada.gateway.alarm.AlarmEvaluator;
 import com.scada.gateway.command.OpcUaClientRegistry;
 import com.scada.gateway.command.TagCatalog;
 import com.scada.gateway.modbus.ModbusClientService;
@@ -45,7 +45,7 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
     private final ConfigurationService configurationService;
     private final TelemetryRepository telemetryRepository;
     private final TelemetryProducer telemetryProducer;
-    private final AlarmProducer alarmProducer;
+    private final AlarmEvaluator alarmEvaluator;
     private final ModbusClientService modbusClientService;
     private final EventLogService eventLogService;
 
@@ -80,9 +80,6 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
     // Последнее качество по тегу — чтобы порождать событие при смене GOOD↔BAD.
     private final Map<Long, String> lastQualityByTag = new ConcurrentHashMap<>();
 
-    // Активный эпизод аларма по тегу — для edge-триггера (не слать аларм каждый цикл).
-    private final Map<Long, ActiveAlarm> activeAlarmByTag = new ConcurrentHashMap<>();
-
     // Разобранный NodeId по его строке — чтобы не парсить строку на каждое чтение.
     private final Map<String, NodeId> nodeIdCache = new ConcurrentHashMap<>();
 
@@ -108,34 +105,19 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
     @Value("${gateway.opcua-op-timeout-ms:5000}")
     private long opcuaOpTimeoutMs;
 
-    /** Активный (ещё не закрытый) аларм по тегу: стабильный alarmId на весь эпизод. */
-    private static final class ActiveAlarm {
-        final String condition;  // LOW | HIGH
-        final String alarmId;    // стабильный идентификатор эпизода
-        final String severity;
-        final double threshold;
-
-        ActiveAlarm(String condition, String alarmId, String severity, double threshold) {
-            this.condition = condition;
-            this.alarmId = alarmId;
-            this.severity = severity;
-            this.threshold = threshold;
-        }
-    }
-
     private final com.scada.gateway.kafka.producer.EventProducer eventProducer;
 
     public OpcUaClientServiceDB(ConfigurationService configurationService,
                                 TelemetryRepository telemetryRepository,
                                 TelemetryProducer telemetryProducer,
-                                AlarmProducer alarmProducer,
+                                AlarmEvaluator alarmEvaluator,
                                 ModbusClientService modbusClientService,
                                 EventLogService eventLogService,
                                 com.scada.gateway.kafka.producer.EventProducer eventProducer) {
         this.configurationService = configurationService;
         this.telemetryRepository = telemetryRepository;
         this.telemetryProducer = telemetryProducer;
-        this.alarmProducer = alarmProducer;
+        this.alarmEvaluator = alarmEvaluator;
         this.modbusClientService = modbusClientService;
         this.eventLogService = eventLogService;
         this.eventProducer = eventProducer;
@@ -663,7 +645,7 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
 
         // Пороги/алармы — только если включены флагом (по умолчанию их считает Monitor).
         if (alarmsEnabled && value instanceof Number) {
-            evaluateAlarms(tag, ((Number) value).doubleValue());
+            alarmEvaluator.evaluate(tag, ((Number) value).doubleValue());
         }
 
         // Локальная история: копим в буфер цикла (batch != null ⇔ persist-telemetry=true).
@@ -684,84 +666,6 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
             }
             log.debug("⚠️ {} = NULL (quality: {})", tag.getName(), quality);
         }
-    }
-
-    /**
-     * Edge-триггер алармов. Аларм публикуется в Kafka ОДИН раз при выходе
-     * значения за предел и ещё раз (cleared=true) при возврате в норму.
-     * Пока значение остаётся вне предела — повторные алармы НЕ шлются, что
-     * убирает «потоп» одинаковых алармов каждую секунду. Гистерезис (deadband)
-     * гасит дребезг у самой границы.
-     *
-     * Severity дифференцируем: ниже min → MINOR (сильно ниже → MAJOR),
-     * выше max → MAJOR (сильно выше → CRITICAL).
-     */
-    private void evaluateAlarms(TagEntity tag, double numValue) {
-        Double min = tag.getMinValue();
-        Double max = tag.getMaxValue();
-        if (min == null && max == null) {
-            return;
-        }
-
-        String unit = tag.getUnit() != null ? tag.getUnit() : "";
-        double range = (min != null && max != null)
-                ? Math.max(max - min, 0.0001)
-                : Math.max(Math.abs(numValue), 1.0);
-        double deadband = 0.02 * range; // 2% диапазона — анти-дребезг на возврате в норму
-
-        ActiveAlarm active = activeAlarmByTag.get(tag.getId());
-
-        String condition = null; // HIGH | LOW | null(норма)
-        String severity = null;
-        double threshold = 0;
-        String message = null;
-
-        if (max != null && numValue > max) {
-            condition = "HIGH";
-            severity = (numValue > max + 0.3 * range) ? "CRITICAL" : "MAJOR";
-            threshold = max;
-            message = String.format("High value: %.2f > %.2f %s", numValue, max, unit);
-        } else if (min != null && numValue < min) {
-            condition = "LOW";
-            severity = (numValue < min - 0.3 * range) ? "MAJOR" : "MINOR";
-            threshold = min;
-            message = String.format("Low value: %.2f < %.2f %s", numValue, min, unit);
-        }
-
-        if (condition != null) {
-            // В зоне аларма: шлём только при НОВОМ эпизоде или смене направления
-            // нарушения (LOW↔HIGH); пока то же нарушение — молчим (анти-флуд).
-            if (active == null || !active.condition.equals(condition)) {
-                if (active != null) {
-                    sendClear(tag, active, numValue); // закрываем прежнее нарушение другого знака
-                }
-                String alarmId = "ALARM_" + tag.getId() + "_" + condition + "_" + System.currentTimeMillis();
-                eventLogService.logAlarm(tag, severity, message, threshold, numValue);
-                alarmProducer.sendAlarm(tag, alarmId, severity, message, threshold, numValue, false);
-                activeAlarmByTag.put(tag.getId(), new ActiveAlarm(condition, alarmId, severity, threshold));
-            }
-            return;
-        }
-
-        // Значение в норме: если был активный аларм и вернулись в норму с
-        // запасом (deadband) — закрываем эпизод (cleared=true) ровно один раз.
-        if (active != null) {
-            boolean backToNormal =
-                    (min == null || numValue >= min + deadband) &&
-                    (max == null || numValue <= max - deadband);
-            if (backToNormal) {
-                sendClear(tag, active, numValue);
-                activeAlarmByTag.remove(tag.getId());
-            }
-        }
-    }
-
-    private void sendClear(TagEntity tag, ActiveAlarm active, double numValue) {
-        String message = String.format("Cleared: %.2f back to normal", numValue);
-        alarmProducer.sendAlarm(tag, active.alarmId, active.severity, message, active.threshold, numValue, true);
-        eventLogService.logEvent("ALARM_CLEARED", "OpcUaClient", "INFO",
-                String.format("Alarm cleared for %s (%.2f)", tag.getName(), numValue),
-                Map.of("tagId", tag.getId(), "tagName", tag.getName(), "alarmId", active.alarmId));
     }
 
     // --- Порты для CommandService (DIP): god-класс — владелец живых карт (кэш тегов,
