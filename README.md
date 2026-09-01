@@ -8,6 +8,7 @@
 
 > Полная спецификация — [`docs/SPECIFICATION.md`](docs/SPECIFICATION.md).
 > Текстовая UML-схема (component / sequence / deployment) — [`docs/architecture.puml`](docs/architecture.puml).
+> Разработка (сборка / тесты / PR) — [`CONTRIBUTING.md`](CONTRIBUTING.md); история версий — [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
