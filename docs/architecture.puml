@@ -157,7 +157,7 @@ ALM -down-> PROD : "алармы (если включены)"
 EVT -down-> PROD : "события / журнал"
 
 ' -- Шлюз ↔ шина --
-PROD -down-> KAFKA : "**Значения тегов**\n(tagId=node.id,\nmetadata{device,field,type})"
+PROD -down-> KAFKA : "**Значения тегов**\nkey=node.id ·\nтело {value, quality, time}"
 KAFKA -up-> PROD : "команды записи\n(scada-commands)"
 
 ' -- Шина → потребители --
@@ -178,9 +178,10 @@ legend right
   <b>2.</b> Клиенты шлюза (Milo / j2mod) забирают значения. Configuration
       Service заранее раздаёт им список тегов (что и с каким адресом читать),
       загруженный на старте из controllers.yaml.
-  <b>3.</b> Значения уходят в Kafka Producers → топик scada.tags с
-      tagId=node.id. Параллельно (по флагам) пишутся батчем в БД шлюза и
-      проверяются Alarm Engine.
+  <b>3.</b> Значения уходят в Kafka Producers → топик scada.tags: ключ = node.id,
+      тело — тонкий триплет {value, quality, time} (метаданные монитор достраивает
+      из своего реестра по ключу). Параллельно (по флагам) пишутся батчем в БД
+      шлюза и проверяются Alarm Engine.
   <b>4.</b> Connection Supervisor не в потоке данных — он СТОРОЖ: следит,
       что связь с контроллерами жива, и молча переподнимает её при обрыве.
   <b>5.</b> Из Kafka данные читают Монитор и мобильное приложение. Монитор
@@ -233,7 +234,7 @@ loop каждый цикл опроса (в родном поколении по
   opt gateway.persist-telemetry = true
     GW -> DB : накопить и записать телеметрию БАТЧем (saveAll)
   end
-  GW -> K  : TELEMETRY {tagId=node.id, value,\nmetadata{device,field,type}} → scada.tags
+  GW -> K  : TELEMETRY  key=node.id · тело {value, quality, time} → scada.tags
   opt значение вне уставки (если алармы включены)
     GW -> K : ALARM {severity, threshold, cleared} → scada-alarms
   end
