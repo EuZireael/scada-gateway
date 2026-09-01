@@ -21,8 +21,16 @@ logger = logging.getLogger(__name__)
 
 
 class ArchiveReplay:
+    """Проигрыватель предпосчитанного архива (data/archive_replay.pkl.gz).
+
+    Хранит по тегу пары (массив времён, массив значений) и по текущему модельному
+    времени отдаёт значение методом zero-order hold. Модельное время = реальное,
+    умноженное на speed, с опциональным зацикливанием."""
+
     def __init__(self, data_path: str, speed: float = 1.0, loop: bool = True,
                  base_dir: Path = None):
+        """Готовит проигрыватель: путь к архиву (относительный резолвится от base_dir),
+        коэффициент ускорения speed и флаг зацикливания. Данные грузятся в load()."""
         self.speed = float(speed)
         self.loop = bool(loop)
 
@@ -37,6 +45,7 @@ class ArchiveReplay:
         self._wall_start = None   # реальное время старта воспроизведения
 
     def load(self):
+        """Читает .pkl.gz в память: ряды значений по тегам, start_epoch и длительность."""
         if not self.data_path.exists():
             raise FileNotFoundError(f"Архив replay не найден: {self.data_path}")
         with gzip.open(self.data_path, "rb") as f:
@@ -52,6 +61,7 @@ class ArchiveReplay:
         )
 
     def start(self):
+        """Отсчитывает нулевую точку воспроизведения от текущего момента (monotonic)."""
         self._wall_start = time.monotonic()
 
     def current_offset(self) -> float:
@@ -75,4 +85,5 @@ class ArchiveReplay:
         return v[idx].item()
 
     def has(self, cid: str) -> bool:
+        """Есть ли в архиве ряд для тега cid."""
         return cid in self.series

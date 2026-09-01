@@ -169,6 +169,8 @@ def build(n_opc: int, n_mb: int, poll_ms: int, bool_ratio: float):
 
 
 def main():
+    """CLI: разбирает аргументы (tags/poll/protocol/…), раскидывает теги по протоколам,
+    проверяет потолок Modbus-регистров и пишет пару конфигов + оценку потока телеметрии."""
     ap = argparse.ArgumentParser(description="Генератор пары конфигов для нагрузочного теста SCADA")
     ap.add_argument("--tags", type=int, required=True, help="всего тегов")
     ap.add_argument("--poll-ms", type=int, default=1000, help="частота опроса, мс (пол 100 в коде шлюза)")
