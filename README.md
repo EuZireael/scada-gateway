@@ -1,5 +1,7 @@
 # SCADA Gateway
 
+[![CI/CD](https://github.com/savushkin-dev/scada-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/savushkin-dev/scada-gateway/actions/workflows/ci.yml)
+
 Промышленный шлюз сбора данных для АСУ ТП: опрашивает контроллеры ПЛК по **OPC UA** и
 **Modbus TCP**, привязывает сигналы к общей базе каналов и публикует телеметрию, события
 и алармы в **Apache Kafka** для монитора, редактора и мобильного приложения.
