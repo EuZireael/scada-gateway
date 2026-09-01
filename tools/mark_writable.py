@@ -43,6 +43,7 @@ def is_writable(dev_type: str, field: str) -> bool:
 
 
 def backup(path: Path) -> Path:
+    """Копирует файл рядом как .bak.<время> перед правкой; возвращает путь бэкапа (откат)."""
     dst = path.with_suffix(path.suffix + f".bak.{time.strftime('%Y%m%d_%H%M%S')}")
     dst.write_text(path.read_text())
     return dst
@@ -91,6 +92,8 @@ def patch_replay(path: Path) -> int:
 
 
 def main():
+    """Бэкапит оба конфига и согласованно размечает актуаторы (writable в шлюзе, RW в
+    симуляторе); печатает счётчики и предупреждает, если правило дало расхождение."""
     for p in (CONTROLLERS, REPLAY):
         if not p.exists():
             sys.exit(f"нет файла {p}")
