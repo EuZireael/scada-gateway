@@ -17,9 +17,9 @@
         <relativePath/>
     </parent>
 
-    <groupId>org.example</groupId>
+    <groupId>com.scada</groupId>
     <artifactId>SCADA-gateway</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.1.0</version>
     <name>SCADA-gateway</name>
     <description>SCADA Gateway for OPC UA</description>
 
