@@ -1,0 +1,67 @@
+# ============================================================================
+# CI (Continuous Integration) — GitHub Actions.
+# Запускается на каждый push в main и на КАЖДЫЙ pull request. Собирает шлюз,
+# гоняет 51 юнит-тест и проверяет синтаксис Python-симулятора/стенда. Результат
+# (зелёная/красная галочка) виден прямо в PR — сломанный код не влить незаметно.
+# ============================================================================
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  # -------------------- Шлюз: сборка + юнит-тесты (Java) --------------------
+  gateway:
+    name: Gateway build & test (Java 21)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: SCADA-gateway   # здесь лежат pom.xml и mvnw
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 21 — совпадает с java.version в pom и с рантаймом (temurin 21-jre).
+      # cache: maven — кэширует ~/.m2, чтобы зависимости не качались каждый раз.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # -B (batch) — без интерактива и прогресс-баров, чистый лог для CI.
+      # verify = compile + test (+ package): те самые 51 тест здесь и прогоняются.
+      - name: Build and test
+        run: ./mvnw -B verify
+
+      # Отчёты surefire — прикладываем к запуску, чтобы при падении было видно,
+      # какой тест упал, не заходя в раннер (доступно во вкладке Actions).
+      - name: Upload test reports
+        if: always()   # даже если сборка упала — отчёт всё равно нужен
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: SCADA-gateway/target/surefire-reports/
+          if-no-files-found: ignore
+
+  # ------------------ Симулятор/стенд: проверка синтаксиса ------------------
+  # Полноценных pytest-тестов у Python-части пока нет (задел на будущее);
+  # минимальный гейт — что все .py хотя бы компилируются (нет опечаток/битого кода).
+  python-syntax:
+    name: Python syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'   # совпадает с образом симулятора (python:3.11-slim)
+
+      - name: Byte-compile all Python
+        run: |
+          find plc-simulator loadtest tools -name '*.py' -print0 \
+            | xargs -0 python -m py_compile
+          echo "OK: все .py компилируются"
