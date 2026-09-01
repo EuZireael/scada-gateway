@@ -127,6 +127,7 @@ def classify(values: np.ndarray):
 
 
 def build(sql_path: Path):
+    """Главный конвейер: SQL → ряды numpy по тегам → .pkl.gz архив + два YAML-конфига."""
     print(f"Читаю {sql_path} ...")
     series, min_ts, max_ts = parse_sql(sql_path)
     duration = max_ts - min_ts
@@ -175,6 +176,7 @@ def build(sql_path: Path):
 
 
 def write_replay_config(tags_meta, duration):
+    """Пишет config/replay_config.yaml — конфиг симулятора (все теги как generator=replay)."""
     sim_tags = []
     for m in tags_meta:
         tag = {
@@ -222,6 +224,7 @@ def write_replay_config(tags_meta, duration):
 
 
 def write_gateway_tags(tags_meta):
+    """Пишет config/gateway_opcua_tags.yaml — сниппет opcua.tags для application.yaml шлюза."""
     type_map = {"bool": "BOOLEAN", "int": "INT", "float": "FLOAT"}
     gw_tags = []
     for m in tags_meta:

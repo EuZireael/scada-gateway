@@ -62,6 +62,7 @@ def sh(cmd, **kw):
 
 
 def compose(*args, env_extra=None):
+    """Запуск docker compose с обоими compose-файлами стенда; env_extra добавляется к окружению."""
     import os
     env = dict(os.environ)
     if env_extra:
@@ -119,6 +120,7 @@ def actuator(name, tag=None, stat="VALUE"):
 
 
 def gateway_healthy():
+    """True, если /actuator/health шлюза отвечает status=UP (иначе, в т.ч. при ошибке, False)."""
     try:
         with urllib.request.urlopen(f"{GATEWAY_ACTUATOR}/health", timeout=3) as resp:
             return json.loads(resp.read()).get("status") == "UP"
@@ -156,6 +158,7 @@ def snapshot():
 
 # ------------------------------------------------------------ chaos / wave --
 def docker(*args):
+    """Тихий вызов docker (вывод проглатывается) — для pause/unpause/restart в chaos/wave."""
     subprocess.run(["docker", *args], cwd=REPO_ROOT,
                    capture_output=True, text=True)
 
@@ -255,6 +258,8 @@ def run_rung(writer, csvfile, rung_label, tags, poll_ms, expected_rate,
 
 # ------------------------------------------------------------------- main ---
 def main():
+    """Прогон профиля из profiles.yaml: генерит конфиги, поднимает стек, снимает метрики
+    по ступеням в CSV (обслуживая wave/chaos), гасит стек (если не --keep) и печатает сводку."""
     ap = argparse.ArgumentParser(description="Оркестратор нагрузочного теста SCADA")
     ap.add_argument("profile", help="имя профиля из profiles.yaml")
     ap.add_argument("--keep", action="store_true", help="не гасить стек после теста")

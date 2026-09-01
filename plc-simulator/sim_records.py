@@ -46,7 +46,14 @@ def fmt_value(raw, dtype):
 
 
 class RecordController:
+    """OPC UA-контроллер «сырых записей приборов».
+
+    На каждый прибор поднимает один string-узел (NodeId ns=2;s=REC:<key>) и на каждом
+    цикле пишет туда строку ИМЯ={поле=знач,...}, собранную из архивных значений полей.
+    Расщепление строки на каналы делает шлюз — здесь только имитация контроллера."""
+
     def __init__(self, config: dict):
+        """Разбирает конфиг (plc + devices + replay) и готовит OPC UA-сервер и проигрыватель архива."""
         plc = config['plc']
         self.plc_id = plc['id']
         self.name = plc['name']
@@ -73,6 +80,7 @@ class RecordController:
         return f"{device['name']}={{{', '.join(parts)}}}"
 
     async def init_server(self):
+        """Поднимает OPC UA-сервер и заводит по одному string-узлу REC:<key> на прибор."""
         await self.server.init()
         self.server.set_endpoint(self.endpoint)
         self.server.set_server_name(self.name)
@@ -93,6 +101,7 @@ class RecordController:
         log.info("OPC UA: %d приборов-записей на %s", len(self.dev_nodes), self.endpoint)
 
     async def update_loop(self):
+        """Бесконечный цикл: раз в update_rate пишет свежую запись каждого прибора в его узел."""
         while True:
             offset = self.replay.current_offset()
             for dev in self.devices:
@@ -106,6 +115,7 @@ class RecordController:
             await asyncio.sleep(self.update_rate)
 
     async def start(self):
+        """Грузит архив, поднимает сервер и запускает цикл записи (блокирует до отмены)."""
         self.replay.load()
         await self.init_server()
         async with self.server:
@@ -121,6 +131,7 @@ class RecordController:
 
 
 async def main():
+    """Точка входа: путь к конфигу из argv (по умолчанию config/records_config.yaml)."""
     cfg_path = sys.argv[1] if len(sys.argv) > 1 else "config/records_config.yaml"
     config = yaml.safe_load(open(Path(__file__).parent / cfg_path, encoding='utf-8'))
     ctrl = RecordController(config)

@@ -1,3 +1,10 @@
+"""
+Data Block (DB) контроллера Siemens: именованная группа тегов.
+
+Тонкая обёртка над словарём тегов — создаёт Tag из конфига, отдаёт их по имени/адресу
+и прокидывает шаг симуляции на все теги внутри. PLCSimulator держит по одному DataBlock
+на каждый db_number из конфига.
+"""
 from typing import Dict, List
 from .tag import Tag
 import logging
@@ -6,8 +13,9 @@ logger = logging.getLogger(__name__)
 
 class DataBlock:
     """Имитация Data Block (DB) контроллера Siemens"""
-    
+
     def __init__(self, db_number: int, name: str, tags_config: List[dict]):
+        """Создаёт DB с номером/именем и наполняет его тегами из tags_config (по одному Tag на запись)."""
         self.db_number = db_number
         self.name = name
         self.tags: Dict[str, Tag] = {}

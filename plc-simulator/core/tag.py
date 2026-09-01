@@ -1,3 +1,12 @@
+"""
+Модель тега симулятора: одна переменная контроллера (OPC UA и/или Modbus).
+
+Тег умеет отдавать значение тремя способами: из архива (generator="replay",
+значение подставляет движок ArchiveReplay), синтетическим генератором (sine/
+random_walk/pulse/…) или как статическое значение с лёгким шумом/дрейфом. У RW-тегов
+значение может записать оператор через шлюз (клапан/мотор). Здесь же — конвертация
+значения в Modbus-регистры и в dict для отправки.
+"""
 import random
 import time
 import math
@@ -7,10 +16,12 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 class AccessType(Enum):
+    """Доступ к тегу: RO — только чтение (датчик), RW — можно записать (актуатор)."""
     READ_ONLY = "RO"
     READ_WRITE = "RW"
 
 class DataType(Enum):
+    """Тип данных значения тега."""
     BOOL = "bool"
     INT = "int"
     FLOAT = "float"
@@ -18,13 +29,16 @@ class DataType(Enum):
     STRING = "string"
 
 class Protocol(Enum):
+    """Протокол, по которому тег отдаётся наружу."""
     OPCUA = "opcua"
     MODBUS = "modbus"
 
 class Tag:
     """Модель тега (переменной) контроллера с поддержкой OPC UA и Modbus"""
-    
+
     def __init__(self, config):
+        """Строит тег из секции YAML: адресация (address/replay_source, opcua/modbus),
+        тип и доступ, пределы min/max, генератор сигнала и флаги шума/дрейфа."""
         # Основные поля
         self.name = config['name']
         self.address = config.get('address', config['name'])
