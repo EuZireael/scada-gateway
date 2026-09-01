@@ -38,6 +38,12 @@ public class TelemetryProducer {
         this.eventLogService = eventLogService;
     }
 
+    /**
+     * Отправляет одну точку телеметрии (значение + качество + время) в scada.tags.
+     * Ключ = tag.getName() (путь узла) — Monitor маршрутизирует по нему. value идёт
+     * ТИПИЗИРОВАННЫМ (число/bool), иначе график на мониторе не построится. No-op, если
+     * Kafka выключена. Отправка асинхронная — поток опроса не блокируется доставкой.
+     */
     public void sendTelemetry(TagEntity tag, Object value, String quality, Instant timestamp) {
         if (!kafkaEnabled) {
             log.debug("Kafka disabled, skipping send for tag: {}", tag.getName());

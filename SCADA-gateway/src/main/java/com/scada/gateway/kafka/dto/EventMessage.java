@@ -4,16 +4,25 @@ import java.time.Instant;
 import java.util.Map;
 
 /**
- * DTO для отправки системных событий в Kafka
+ * DTO системного события шлюза для Kafka (топик scada-events): смена связи/качества,
+ * старт/стоп, ошибки. Потребитель — Monitor Srv (вкладка событий).
  */
 public class EventMessage {
+    /** Уникальный id сообщения (UUID) — для дедупликации на приёмнике. */
     private String messageId;
+    /** Категория конверта (константа "EVENT") — отличает от алармов/телеметрии. */
     private String type = "EVENT";
+    /** Тип события: CONNECTION/HEARTBEAT/SYSTEM/QUALITY_CHANGE и т.п. */
     private String eventType;
+    /** Компонент-источник (OpcUaClient, Gateway, …). */
     private String source;
+    /** Важность: INFO/WARNING/ERROR/CRITICAL. */
     private String severity;
+    /** Человекочитаемый текст события. */
     private String message;
+    /** Момент события. */
     private Instant timestamp;
+    /** Произвольные детали (контроллер, endpoint, причина) — свободная карта. */
     private Map<String, Object> details;
 
     public EventMessage() {}

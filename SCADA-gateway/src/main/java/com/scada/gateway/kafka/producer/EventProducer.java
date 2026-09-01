@@ -14,15 +14,12 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Публикует системные события шлюза в Kafka-топик scada-events.
- *
- * Раньше события только писались в БД шлюза (EventLogService), а в Kafka
- * не уходили — топик scada-events был пустым, и Monitor Srv не получал
- * ни одного события. Этот продюсер закрывает пробел.
- */
-/**
  * Продюсер событий шлюза в Kafka (топик scada-events): смена связи/качества,
  * системные и прочие события из EventLogService — для мониторинга и аудита.
+ *
+ * <p>Раньше события только писались в БД шлюза (EventLogService), а в Kafka не
+ * уходили — топик scada-events был пуст, и Monitor Srv не получал ни одного
+ * события. Этот продюсер закрывает пробел.
  */
 @Service
 public class EventProducer {
@@ -46,6 +43,11 @@ public class EventProducer {
         this.eventsTopic = eventsTopic;
     }
 
+    /**
+     * Собирает EventMessage и шлёт его в scada-events. No-op, если Kafka или
+     * публикация событий выключены (тогда событие живёт только в БД шлюза).
+     * Отправка асинхронная: ошибку доставки логируем в callback, поток опроса не ждёт.
+     */
     public void sendEvent(String eventType, String source, String severity,
                           String message, Map<String, Object> details) {
         if (!kafkaEnabled || !publishEvents) {

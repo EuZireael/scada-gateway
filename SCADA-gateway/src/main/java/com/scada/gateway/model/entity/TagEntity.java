@@ -14,44 +14,57 @@ import java.time.LocalDateTime;
 @Table(name = "tags")
 public class TagEntity {
     
+    /** Внутренний PK тега в БД шлюза (не путать с channelId — id канала монитора). */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
+
+    /** Контроллер-владелец (LAZY: подгружается по требованию, см. findAllEnabledWithController). */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "controller_id", nullable = false)
     private ControllerEntity controller;
-    
+
+    /** Адрес узла OPC UA (строка NodeId) и одновременно имя канала = Kafka-key. */
     @Column(name = "node_id", nullable = false)
     private String nodeId;
-    
+
+    /** Человекочитаемое имя тега. */
     @Column(nullable = false)
     private String name;
-    
+
+    /** Необязательное описание. */
     @Column(name = "description")
     private String description;
-    
+
+    /** Тип данных значения (BOOLEAN/INT/FLOAT/…) — управляет приведением при записи. */
     @Column(name = "data_type", nullable = false)
     private String dataType;
-    
+
+    /** Единица измерения (для отображения). */
     @Column(name = "unit")
     private String unit;
-    
+
+    /** Период опроса тега, мс (мин. эффективный шаг цикла = min по тегам контроллера). */
     @Column(name = "polling_rate")
     private Long pollingRate = 1000L;
-    
+
+    /** Опрашивать ли тег. false → тег пропускается в цикле. */
     @Column(name = "enabled")
     private boolean enabled = true;
-    
+
+    /** Нижний порог аларма (если алармы считает шлюз); null — без нижнего порога. */
     @Column(name = "min_value")
     private Double minValue;
-    
+
+    /** Верхний порог аларма; null — без верхнего порога. */
     @Column(name = "max_value")
     private Double maxValue;
-    
+
+    /** Проставляется @PrePersist при создании записи. */
     @Column(name = "created_at")
     private LocalDateTime createdAt;
-    
+
+    /** Проставляется @PreUpdate при каждом изменении. */
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
     
@@ -103,26 +116,30 @@ public class TagEntity {
 
     // ==========================================
     
+    /** Последнее значение в памяти (не хранится в БД) — вспомогательное поле. */
     @Transient
     private Object lastValue;
-    
+
+    /** Время последнего чтения в памяти (не хранится в БД). */
     @Transient
     private Instant lastReadTime;
     
     // Пустой конструктор обязателен для JPA
     public TagEntity() {}
     
+    /** JPA-хук: при первой вставке проставляет created_at и updated_at. */
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
     }
-    
+
+    /** JPA-хук: при каждом обновлении освежает updated_at. */
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
     }
-    
+
     // ========== Геттеры и сеттеры ==========
     
     public Long getId() { return id; }
@@ -208,11 +225,14 @@ public class TagEntity {
     public void setLastReadTime(Instant lastReadTime) { this.lastReadTime = lastReadTime; }
     
     // ========== Вспомогательные методы ==========
-    
+
+    /** Modbus ли тег ПО ПОЛЮ protocol. Для маршрутизации опроса используется более
+     *  мягкий {@link com.scada.gateway.model.TagProtocols#isModbusTag} (с фолбэком по адресу). */
     public boolean isModbus() {
         return "modbus".equalsIgnoreCase(protocol);
     }
-    
+
+    /** OPC UA ли тег ПО ПОЛЮ protocol (аналогично isModbus). */
     public boolean isOpcUa() {
         return "opcua".equalsIgnoreCase(protocol);
     }

@@ -15,6 +15,7 @@ import java.util.Map;
 @RequestMapping("/api/status")
 public class StatusController {
 
+    /** Сводный статус одним запросом. GET /api/status → имя сервиса, состояние, время. */
     @GetMapping
     public Map<String, Object> getStatus() {
         Map<String, Object> status = new HashMap<>();

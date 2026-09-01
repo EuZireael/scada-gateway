@@ -21,12 +21,10 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Сервис для работы с конфигурацией из БД (без Lombok).
- */
-/**
- * Мост между статическим конфигом и рантаймом. При старте засевает БД контроллерами
- * и тегами из controllers.yaml (initDatabaseFromYaml, идемпотентно) и отдаёт их
- * остальным сервисам (getAllControllers, getTagsForController, getAllActiveTags).
+ * Мост между статическим конфигом и рантаймом. При старте синхронизирует БД с
+ * controllers.yaml (initDatabaseFromYaml, идемпотентно) и держит теги/контроллеры в
+ * кэшах, отдавая их остальным сервисам (getAllControllers, getTagsForController,
+ * getAllActiveTags). Кэши убирают запросы к БД с горячего пути опроса.
  */
 @Service
 public class ConfigurationService {
@@ -54,6 +52,7 @@ public class ConfigurationService {
         this.opcUaConfig = opcUaConfig;
     }
 
+    /** Старт: синхронизирует БД с YAML и прогревает кэши. Вызывается один раз (@PostConstruct). */
     @PostConstruct
     @Transactional
     public void initDatabaseFromYaml() {
@@ -66,6 +65,11 @@ public class ConfigurationService {
         loadConfiguration();
     }
 
+    /**
+     * Полная синхронизация БД с controllers.yaml: upsert контроллеров по имени и тегов
+     * по nodeId в пределах контроллера, удаление исчезнувших из YAML. Идемпотентно —
+     * повторный старт с тем же конфигом ничего не меняет. YAML — источник истины.
+     */
     private void syncDatabaseFromYaml() {
         log.info("Synchronizing database with YAML configuration...");
 
@@ -174,6 +178,11 @@ public class ConfigurationService {
             created, updated, deleted, yamlControllerNames.size());
     }
 
+    /**
+     * Перечитывает включённые контроллеры и теги из БД в кэши (по id, по nodeId и
+     * предгруппировку по контроллеру). Предгруппировка снимает stream().filter() по
+     * всем ~2471 тегам с КАЖДОГО цикла опроса.
+     */
     @Transactional(readOnly = true)
     public void loadConfiguration() {
         log.info("Loading configuration from database...");
@@ -200,25 +209,30 @@ public class ConfigurationService {
             controllers.size(), tags.size());
     }
 
+    /** Все включённые контроллеры из кэша (копия — вызывающий не портит кэш). */
     public List<ControllerEntity> getAllControllers() {
         return List.copyOf(controllerCache.values());
     }
 
+    /** Все активные теги из кэша — для загрузки конфигурации опроса. */
     public List<TagEntity> getAllActiveTags() {
         return tagCache.values().stream()
             .filter(TagEntity::isEnabled)
             .collect(Collectors.toList());
     }
 
+    /** Активные теги одного контроллера из предгруппированного кэша (горячий путь опроса). */
     public List<TagEntity> getTagsForController(Long controllerId) {
         // Из предгруппированного кэша — без stream/filter на каждый цикл опроса.
         return tagsByControllerCache.getOrDefault(controllerId, List.of());
     }
 
+    /** Тег по строке nodeId (адресация OPC UA-узла); null, если такого нет. */
     public TagEntity getTagByNodeId(String nodeId) {
         return tagByNodeIdCache.get(nodeId);
     }
 
+    /** Сводка конфигурации (число контроллеров/тегов + список) — для REST-мониторинга. */
     public Map<String, Object> getStats() {
         return Map.of(
             "controllers", controllerCache.size(),

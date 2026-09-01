@@ -21,6 +21,7 @@ public class MonitoringController {
         this.eventLogService = eventLogService;
     }
 
+    /** Лёгкая проверка живости шлюза. GET /api/health → {status:UP}. */
     @GetMapping("/health")
     public Map<String, String> health() {
         Map<String, String> response = new HashMap<>();

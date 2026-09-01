@@ -117,6 +117,11 @@ public class TelemetryProcessor {
         }
     }
 
+    /**
+     * Горячий путь обработки одного снятого значения тега: событие при смене качества,
+     * (опционально) оценка алармов, буферизация в batch для батч-записи в БД и отправка
+     * значения в Kafka. batch != null ⇔ persist-telemetry=true; flush делает вызывающий.
+     */
     public void processTagValue(TagEntity tag, Object value, String quality, Instant timestamp, List<TelemetryEntity> batch) {
         // Чтение тега НЕ логируем в event_log на каждый опрос. Значения идут в Kafka
         // (и, если включён persist-telemetry, в локальную БД батчем в конце цикла);
@@ -163,6 +168,10 @@ public class TelemetryProcessor {
         }
     }
 
+    /**
+     * Строит строку telemetry для БД: число/boolean → числовая колонка value
+     * (boolean как 1.0/0.0), прочее → строковая колонка value_str.
+     */
     private TelemetryEntity buildTelemetry(TagEntity tag, Object value, String quality, Instant timestamp) {
         TelemetryEntity t = new TelemetryEntity();
         t.setTagId(tag.getId());

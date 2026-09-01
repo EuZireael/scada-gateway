@@ -7,15 +7,23 @@ import java.time.Instant;
  * (топик scada-command-results). Поля совпадают с scada.core.dto.CommandResultDTO.
  */
 public class CommandResultMessage {
+    /** id исходной команды — по нему монитор находит, чей это результат. */
     private String commandId;
+    /** id тега, к которому относился результат. */
     private Long tagId;
+    /** Имя тега (= Kafka-key результата). */
     private String tagName;
+    /** Машиночитаемый исход (см. CommandStatus, A5). */
     private String status;      // APPLIED | REJECTED_UNKNOWN_TAG | REJECTED_NOT_WRITABLE |
                                 // REJECTED_TYPE_MISMATCH | REJECTED_PROTOCOL_UNSUPPORTED |
                                 // FAILED_NO_CONNECTION | FAILED_WRITE (A5)
+    /** Короткий флаг успеха (= status == APPLIED). */
     private boolean success;
+    /** Человекочитаемая деталь для оператора. */
     private String message;
+    /** Фактически записанное значение (после приведения к типу); null при отказе. */
     private Object appliedValue;
+    /** Время формирования результата на шлюзе. */
     private Instant timestamp;
 
     public CommandResultMessage() {}

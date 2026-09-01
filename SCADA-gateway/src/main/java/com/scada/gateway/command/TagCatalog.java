@@ -9,6 +9,8 @@ import com.scada.gateway.model.entity.TagEntity;
  * Так CommandService зависит от узкого контракта, а не от god-класса. null = не найден.
  */
 public interface TagCatalog {
+    /** Тег по внутреннему id БД; null — не найден. */
     TagEntity byId(Long id);
+    /** Тег по имени канала (полный путь узла); null — не найден. */
     TagEntity byName(String name);
 }

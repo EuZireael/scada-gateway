@@ -7,13 +7,21 @@ import java.time.Instant;
  * Поля совпадают с scada.core.dto.CommandDTO на стороне Monitor.
  */
 public class CommandMessage {
+    /** Уникальный id команды — по нему монитор коррелирует результат (CommandResultMessage). */
     private String commandId;
+    /** id контроллера (может быть null — тег находим по tagId/tagName). */
     private Long controllerId;
+    /** id тега; основной способ адресации. */
     private Long tagId;
+    /** Имя тега (путь канала) — фолбэк-адресация, если tagId не задан. */
     private String tagName;
+    /** Тип значения для приведения перед записью. */
     private String dataType;   // BOOL | INT | FLOAT
+    /** Записываемое значение (сырое из JSON, приводится по dataType). */
     private Object value;
+    /** Кто инициировал команду (оператор/система) — для аудита. */
     private String requestedBy;
+    /** Время формирования команды на стороне монитора. */
     private Instant timestamp;
 
     public CommandMessage() {}

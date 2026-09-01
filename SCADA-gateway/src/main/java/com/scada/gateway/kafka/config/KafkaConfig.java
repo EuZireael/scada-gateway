@@ -45,26 +45,31 @@ public class KafkaConfig {
     @Value("${spring.kafka.consumer.group-id:scada-gateway-group}")
     private String groupId;
 
+    /** Топик телеметрии — самый нагруженный поток, 3 партиции для параллелизма чтения. */
     @Bean
     public NewTopic telemetryTopic() {
         return TopicBuilder.name(telemetryTopic).partitions(3).replicas(1).build();
     }
 
+    /** Топик алармов — поток реже телеметрии, 2 партиции. */
     @Bean
     public NewTopic alarmsTopic() {
         return TopicBuilder.name(alarmsTopic).partitions(2).replicas(1).build();
     }
 
+    /** Топик системных событий — низкий трафик, 1 партиции достаточно. */
     @Bean
     public NewTopic eventsTopic() {
         return TopicBuilder.name(eventsTopic).partitions(1).replicas(1).build();
     }
 
+    /** Топик команд (Monitor → шлюз) — 1 партиция: порядок команд важнее параллелизма. */
     @Bean
     public NewTopic commandsTopic() {
         return TopicBuilder.name(commandsTopic).partitions(1).replicas(1).build();
     }
 
+    /** Топик результатов команд (шлюз → Monitor) — 1 партиция, порядок исходов. */
     @Bean
     public NewTopic commandResultsTopic() {
         return TopicBuilder.name(commandResultsTopic).partitions(1).replicas(1).build();
@@ -72,6 +77,10 @@ public class KafkaConfig {
 
     // ==================== Консьюмер команд (Monitor → шлюз) ====================
 
+    /**
+     * Фабрика консьюмера команд. Отдельная от продюсеров конфигурация, потому что
+     * Monitor шлёт команды БЕЗ тип-заголовков и БЕЗ auto-commit — детали в теле метода.
+     */
     @Bean
     public ConsumerFactory<String, CommandMessage> commandConsumerFactory() {
         Map<String, Object> props = new HashMap<>();
@@ -93,6 +102,7 @@ public class KafkaConfig {
         return new DefaultKafkaConsumerFactory<>(props);
     }
 
+    /** Контейнер-фабрика для @KafkaListener команд — связывает слушатель с фабрикой выше. */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, CommandMessage>
     commandKafkaListenerContainerFactory() {

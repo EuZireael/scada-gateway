@@ -3,16 +3,27 @@ package com.scada.gateway.model;
 import java.time.Instant;
 
 /**
- * Модель данных для передачи значения тега (без Lombok).
+ * Полный (self-contained) снимок значения тега: значение + метаданные (сервер, имя,
+ * тип, единицы, качество, время). В отличие от «тонкого» {@link
+ * com.scada.gateway.kafka.dto.TelemetryMessage} (только value/quality/timestamp) несёт
+ * всё в одном объекте — используется там, где метаданные нужны рядом со значением.
  */
 public class TagValue {
+    /** Идентификатор сервера/контроллера-источника. */
     private String serverId;
+    /** Идентификатор тега (строкой). */
     private String tagId;
+    /** Имя тега (путь канала). */
     private String tagName;
+    /** Само значение. */
     private Object value;
+    /** Тип данных значения. */
     private String dataType;
+    /** Качество: GOOD/BAD. */
     private String quality;
+    /** Момент снятия значения. */
     private Instant timestamp;
+    /** Единица измерения. */
     private String unit;
 
     // --- Конструкторы ---

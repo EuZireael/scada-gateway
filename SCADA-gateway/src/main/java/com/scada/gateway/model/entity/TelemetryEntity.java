@@ -11,25 +11,32 @@ import java.time.Instant;
 @Table(name = "telemetry")
 public class TelemetryEntity {
     
+    /** PK точки телеметрии. */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
+
+    /** id тега (внутренний PK тега шлюза). */
     @Column(name = "tag_id", nullable = false)
     private Long tagId;
-    
+
+    /** Момент снятия значения (sourceTime у OPC UA, момент чтения у Modbus). */
     @Column(name = "time", nullable = false)
     private Instant time;
-    
+
+    /** Числовое значение (для аналоговых тегов) — по нему считается averageValue. */
     @Column(name = "value")
     private Double value;
-    
+
+    /** Строковое значение (для нечисловых тегов, когда value неприменимо). */
     @Column(name = "value_str")
     private String valueString;
-    
+
+    /** Качество: GOOD/BAD — валиден ли отсчёт. */
     @Column(name = "quality", length = 20)
     private String quality;
-    
+
+    /** Сырые байты кадра (для отладки/разбора прибора), если сохраняются. */
     @Column(name = "raw_data")
     private byte[] rawData;
     

@@ -9,16 +9,13 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Периодически шлёт системное событие HEARTBEAT в журнал событий и в Kafka.
+ * Периодический heartbeat шлюза (@Scheduled): шлёт системное событие HEARTBEAT в
+ * журнал событий и в Kafka — регулярный признак «жив», чтобы монитор отличал
+ * «шлюз работает» от «шлюз молчит/упал».
  *
- * Назначение — «оживить» журнал событий на демонстрации: реальные события
- * (подключение/ошибки/смена качества) эпизодические, а телеметрия течёт
- * постоянно. Heartbeat даёт ровный поток системных событий, подтверждающий,
- * что шлюз жив, и наполняет вкладку событий на стороне Monitor Srv.
- */
-/**
- * Периодический heartbeat шлюза (@Scheduled): регулярный признак «жив», чтобы
- * монитор отличал «шлюз работает» от «шлюз молчит/упал».
+ * <p>Также «оживляет» журнал на демонстрации: реальные события (подключение,
+ * ошибки, смена качества) эпизодические, а heartbeat даёт ровный фоновый поток и
+ * наполняет вкладку событий на стороне Monitor Srv.
  */
 @Service
 public class GatewayHeartbeatService {
@@ -33,6 +30,10 @@ public class GatewayHeartbeatService {
         this.configurationService = configurationService;
     }
 
+    /**
+     * Раз в heartbeat-interval-ms шлёт событие HEARTBEAT с аптаймом и текущими
+     * счётчиками контроллеров/тегов. initialDelay даёт шлюзу подняться до первого удара.
+     */
     @Scheduled(fixedDelayString = "${gateway.heartbeat-interval-ms:30000}", initialDelay = 15000)
     public void heartbeat() {
         long uptimeSec = Duration.between(startedAt, Instant.now()).getSeconds();

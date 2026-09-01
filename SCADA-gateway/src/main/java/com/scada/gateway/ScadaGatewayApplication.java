@@ -13,6 +13,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 public class ScadaGatewayApplication {
 
+    /** Запуск приложения: поднимает Spring-контекст, дальше всё делают бины (@Scheduled-опрос и т.д.). */
     public static void main(String[] args) {
         SpringApplication.run(ScadaGatewayApplication.class, args);
     }
