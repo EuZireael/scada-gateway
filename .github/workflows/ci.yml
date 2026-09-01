@@ -1,8 +1,9 @@
 # ============================================================================
 # CI/CD — GitHub Actions.
-# Запускается на каждый push в main и на КАЖДЫЙ pull request.
+# Запускается на push в main, на КАЖДЫЙ pull request и на пуш релизного тега vX.Y.Z.
 #   CI (проверка): собирает шлюз + гоняет юнит-тесты, проверяет синтаксис Python.
-#   CD (доставка): собирает docker-образ шлюза; на push в main публикует его в GHCR.
+#   CD (доставка): собирает docker-образ шлюза и публикует в GHCR —
+#     push в main → :latest (+ :<sha>);  тег vX.Y.Z → :vX.Y.Z (+ :<sha>).
 # Результат (зелёная/красная галочка) виден прямо в PR — сломанный код не влить.
 # ============================================================================
 name: CI/CD
@@ -10,6 +11,7 @@ name: CI/CD
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]        # релизный тег vX.Y.Z → версионный образ
   pull_request:
 
 jobs:
@@ -69,8 +71,8 @@ jobs:
 
   # ---------------- CD: сборка и публикация docker-образа шлюза -------------
   # «D» из CI/CD. На PR — только СОБИРАЕТ образ (проверка, что Dockerfile рабочий).
-  # На push в main — ещё и ПУБЛИКУЕТ его в GitHub Container Registry (ghcr.io).
-  # needs: gateway — образ собираем только если юнит-тесты прошли.
+  # На push в main / тег vX.Y.Z — ПУБЛИКУЕТ в GHCR: main → :latest, тег → :версия
+  # (оба + :<sha>). needs: gateway — образ собираем только если юнит-тесты прошли.
   docker:
     name: Build & publish image (GHCR)
     needs: gateway
@@ -100,14 +102,25 @@ jobs:
         if: github.event_name == 'push'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      # Контекст сборки — SCADA-gateway (Dockerfile там же). Два тега: latest
-      # (последний main) и по SHA коммита (точная воспроизводимость деплоя).
-      - name: Build image
+      # Какими тегами метить образ — зависит от того, ЧТО пушим:
+      #   main       → :latest (+ :<sha>)   — «последняя сборка main» (dev);
+      #   тег vX.Y.Z → :vX.Y.Z (+ :<sha>)   — замороженная версия для деплоя;
+      #   PR         → :ci-<sha>            — только валидация сборки, не публикуется.
+      - name: Compute image tags
+        id: meta
         run: |
-          docker build \
-            -t ghcr.io/${{ github.repository }}:latest \
-            -t ghcr.io/${{ github.repository }}:${{ github.sha }} \
-            SCADA-gateway
+          IMAGE="ghcr.io/${{ github.repository }}"
+          case "${{ github.ref }}" in
+            refs/heads/main) TAGS="$IMAGE:latest $IMAGE:${{ github.sha }}" ;;
+            refs/tags/v*)    TAGS="$IMAGE:${{ github.ref_name }} $IMAGE:${{ github.sha }}" ;;
+            *)               TAGS="$IMAGE:ci-${{ github.sha }}" ;;
+          esac
+          ARGS=""; for t in $TAGS; do ARGS="$ARGS -t $t"; done
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+
+      # Контекст сборки — SCADA-gateway (Dockerfile там же).
+      - name: Build image
+        run: docker build ${{ steps.meta.outputs.args }} SCADA-gateway
 
       # Публикуем ОБА тега только на push в main; на PR этот шаг пропускается.
       - name: Push image
