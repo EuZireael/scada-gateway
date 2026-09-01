@@ -18,6 +18,13 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Низкоуровневый клиент Modbus TCP (j2mod): пул соединений по host:port, троттлинг
+ * логов обрыва, backoff на переподключение (анти-hot-loop). Чтение:
+ * readFloat/readInt16/readBoolean (по одному тегу) и readHoldingRegisters (блок
+ * регистров одной FC03 — основа батч-чтения, см. ModbusBatchReader). Запись:
+ * writeRegister (FC06) / writeFloat (FC16). Явный таймаут на connect/чтение.
+ */
 @Service
 public class ModbusClientService {
 

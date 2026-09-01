@@ -3,17 +3,23 @@ package com.scada.gateway.model.entity;
 import jakarta.persistence.*;
 import java.time.Instant;
 
+/**
+ * JPA-сущность записи журнала событий (таблица event_log): тип/важность/источник/
+ * сообщение, привязка к тегу и контроллеру. Аудит связи, качества, алармов и ошибок.
+ */
 @Entity
 @Table(name = "event_log")
 public class EventLogEntity {
     
+    /** PK записи журнала. */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
+
+    /** Момент события (UTC). Заполняется при сохранении в EventLogService.saveEvent. */
     @Column(name = "event_time", nullable = false)
     private Instant eventTime;
-    
+
     @Column(name = "event_type", nullable = false, length = 50)
     private String eventType;  // CONNECTION, DISCONNECTION, TAG_READ, ALARM, ERROR, SYSTEM
     
@@ -23,6 +29,7 @@ public class EventLogEntity {
     @Column(name = "severity", length = 20)
     private String severity;    // INFO, WARNING, ERROR, CRITICAL
     
+    /** Человекочитаемый текст события (до 500 символов). */
     @Column(name = "message", length = 500)
     private String message;
     

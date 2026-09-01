@@ -46,22 +46,26 @@ public final class ValueCodec {
         return v;
     }
 
+    /** В boolean: Number → «≠0 = true», иначе парсинг строки ("true"/"false"). */
     public static Boolean toBool(Object v) {
         if (v instanceof Boolean b) return b;
         if (v instanceof Number n) return n.doubleValue() != 0.0;
         return Boolean.parseBoolean(String.valueOf(v).trim());
     }
 
+    /** В int: Number усекается, иначе парсинг строки. Бросает при нечисловой строке. */
     public static Integer toInt(Object v) {
         if (v instanceof Number n) return n.intValue();
         return Integer.parseInt(String.valueOf(v).trim());
     }
 
+    /** Во float: Number сужается, иначе парсинг строки. Бросает при нечисловой строке. */
     public static Float toFloat(Object v) {
         if (v instanceof Number n) return n.floatValue();
         return Float.parseFloat(String.valueOf(v).trim());
     }
 
+    /** В double: Number расширяется, иначе парсинг строки. Бросает при нечисловой строке. */
     public static Double toDouble(Object v) {
         if (v instanceof Number n) return n.doubleValue();
         return Double.parseDouble(String.valueOf(v).trim());

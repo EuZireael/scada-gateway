@@ -8,7 +8,8 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 /**
- * Публикует результат выполнения команды в Kafka-топик scada-command-results.
+ * Продюсер результатов команд в Kafka (топик scada-command-results): исход записи
+ * (APPLIED / REJECTED_* / FAILED_*) отправляется обратно монитору после writeTag.
  * Потребитель — Monitor Srv, который доставляет результат в UI по WebSocket.
  */
 @Service
@@ -28,6 +29,11 @@ public class CommandResultProducer {
         this.resultsTopic = resultsTopic;
     }
 
+    /**
+     * Отправляет результат команды монитору. Ключ = tagName (путь канала) → результаты
+     * одного тега в одну партицию по порядку; фолбэк на commandId, если tagName пуст.
+     * No-op при выключенной Kafka.
+     */
     public void send(CommandResultMessage result) {
         if (!kafkaEnabled) {
             log.debug("Kafka disabled, skipping command result for: {}", result.getTagName());

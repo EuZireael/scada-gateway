@@ -6,11 +6,18 @@ package com.scada.gateway.command;
  * парсинга текста message. На провод уходит .name().
  */
 public enum CommandStatus {
+    /** Запись прошла: значение отправлено в контроллер. */
     APPLIED,
+    /** Тега с таким id/именем нет в конфиге (ошибка адресации команды). */
     REJECTED_UNKNOWN_TAG,
+    /** Тег помечен RO (датчик) — запись запрещена (writable=false). */
     REJECTED_NOT_WRITABLE,
+    /** Значение не приводится к типу тега (например текст в INT). */
     REJECTED_TYPE_MISMATCH,
+    /** Протокол тега не поддерживает запись в текущей реализации. */
     REJECTED_PROTOCOL_UNSUPPORTED,
+    /** Контроллер не на связи — записать некуда. */
     FAILED_NO_CONNECTION,
+    /** Связь есть, но сама запись упала (таймаут/отказ устройства). */
     FAILED_WRITE
 }

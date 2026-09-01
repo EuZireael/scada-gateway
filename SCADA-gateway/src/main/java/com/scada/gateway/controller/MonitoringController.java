@@ -7,6 +7,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * REST-эндпоинты мониторинга: здоровье шлюза и выборки из журнала событий
+ * (event_log) по типу/важности. Для оператора и интеграций, не для потока телеметрии.
+ */
 @RestController
 @RequestMapping("/api")
 public class MonitoringController {
@@ -17,6 +21,7 @@ public class MonitoringController {
         this.eventLogService = eventLogService;
     }
 
+    /** Лёгкая проверка живости шлюза. GET /api/health → {status:UP}. */
     @GetMapping("/health")
     public Map<String, String> health() {
         Map<String, String> response = new HashMap<>();

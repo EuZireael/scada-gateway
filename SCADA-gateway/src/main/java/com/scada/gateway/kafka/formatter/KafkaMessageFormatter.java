@@ -10,6 +10,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Единое место сборки DTO-сообщений Kafka (алармы, события и т.п.) из доменных
+ * объектов — чтобы форматирование полезной нагрузки не размазывалось по продюсерам.
+ */
 @Component
 public class KafkaMessageFormatter {
 

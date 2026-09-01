@@ -102,6 +102,7 @@ public class AlarmEvaluator {
         }
     }
 
+    /** Закрывает активный эпизод: шлёт аларм с cleared=true (тот же alarmId) и пишет событие ALARM_CLEARED. */
     private void sendClear(TagEntity tag, ActiveAlarm active, double numValue) {
         String message = String.format("Cleared: %.2f back to normal", numValue);
         alarmProducer.sendAlarm(tag, active.alarmId, active.severity, message, active.threshold, numValue, true);

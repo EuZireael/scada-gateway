@@ -8,5 +8,6 @@ import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
  * соединений); здесь только чтение. {@code null} = контроллер не подключён.
  */
 public interface OpcUaClientRegistry {
+    /** Живой OPC UA-клиент контроллера; {@code null}, если тот не подключён. */
     OpcUaClient forController(Long controllerId);
 }

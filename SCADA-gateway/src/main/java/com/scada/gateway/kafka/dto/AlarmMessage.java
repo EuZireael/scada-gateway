@@ -3,22 +3,37 @@ package com.scada.gateway.kafka.dto;
 import java.time.Instant;
 
 /**
- * DTO для отправки алармов в Kafka
+ * DTO аларма для Kafka (топик scada-alarms). Edge-триггерный: raise при выходе за
+ * порог и clear (cleared=true) при возврате в норму. Потребитель — Monitor Srv.
  */
 public class AlarmMessage {
+    /** Уникальный id сообщения (UUID) — дедупликация на приёмнике. */
     private String messageId;
+    /** Категория конверта (константа "ALARM"). */
     private String type = "ALARM";
+    /** id эпизода аларма — СТАБИЛЕН на всю связку raise→clear (по нему монитор закрывает аларм). */
     private String alarmId;
+    /** id канала в общей БД каналов (channelId, фолбэк на внутренний id тега). */
     private Long tagId;
+    /** Имя тега (= Kafka-key). */
     private String tagName;
+    /** Важность аларма: WARNING/MAJOR/CRITICAL. */
     private String severity;
+    /** Человекочитаемый текст. */
     private String message;
+    /** Порог, который был нарушен. */
     private Double threshold;
+    /** Значение тега в момент срабатывания. */
     private Double currentValue;
+    /** Момент события. */
     private Instant timestamp;
+    /** Квитирован ли оператором (обычно false при отправке). */
     private Boolean acknowledged;
+    /** true = это снятие аларма (возврат в норму), а не срабатывание. */
     private Boolean cleared;
+    /** id контроллера-владельца тега. */
     private Long controllerId;
+    /** Имя контроллера (для отображения). */
     private String controllerName;
 
     public AlarmMessage() {}

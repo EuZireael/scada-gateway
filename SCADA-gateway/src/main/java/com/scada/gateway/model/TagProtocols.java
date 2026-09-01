@@ -19,12 +19,20 @@ public final class TagProtocols {
         // Утилитный класс — не инстанцируем.
     }
 
+    /**
+     * OPC UA ли тег. Явный protocol=modbus сразу исключает; иначе OPC UA при
+     * protocol=opcua ИЛИ при наличии непустого nodeId (фолбэк без поля protocol).
+     */
     public static boolean isOpcUaTag(TagEntity tag) {
         if ("modbus".equalsIgnoreCase(tag.getProtocol())) return false;
         return "OPCUA".equalsIgnoreCase(tag.getProtocol()) ||
                (tag.getNodeId() != null && !tag.getNodeId().isEmpty());
     }
 
+    /**
+     * Modbus ли тег: protocol=modbus ИЛИ задан положительный modbusAddress
+     * (фолбэк, когда поле protocol не проставлено).
+     */
     public static boolean isModbusTag(TagEntity tag) {
         return "MODBUS".equalsIgnoreCase(tag.getProtocol()) ||
                (tag.getModbusAddress() != null && tag.getModbusAddress() > 0);

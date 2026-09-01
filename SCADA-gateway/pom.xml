@@ -5,6 +5,11 @@
          https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <!-- Maven-модуль SCADA-шлюза (Spring Boot 3.5, Java 21). Зависимости: web/actuator,
+         data-jpa + Postgres + Flyway, spring-kafka, Milo (OPC UA), j2mod (Modbus),
+         micrometer-prometheus. Сборка: mvn -DskipTests package → fat-jar в target/. -->
+
+
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>

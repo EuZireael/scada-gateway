@@ -13,6 +13,10 @@ import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * Продюсер алармов в Kafka (топик scada-alarms). Публикует edge-триггерные алармы
+ * от AlarmEvaluator: выход значения за порог и возврат в норму (cleared).
+ */
 @Service
 public class AlarmProducer {
 
@@ -37,6 +41,12 @@ public class AlarmProducer {
         this.eventLogService = eventLogService;
     }
 
+    /**
+     * Публикует аларм (или его снятие, cleared=true) в scada-alarms. No-op, если
+     * Kafka или публикация алармов выключены. Ключ = tag.getName() → все сообщения
+     * одного тега в одну партицию по порядку (raise затем clear). Отправка
+     * асинхронная; исход пишется в event_log через logKafkaEvent.
+     */
     public void sendAlarm(TagEntity tag, String alarmId, String severity, String message,
                           Double threshold, Double currentValue, boolean cleared) {
         if (!kafkaEnabled || !publishAlarms) {

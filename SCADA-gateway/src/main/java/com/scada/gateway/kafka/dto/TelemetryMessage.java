@@ -17,8 +17,11 @@ import java.time.Instant;
  * value.asText(), и для аналога это должно давать число, иначе график не строится.
  */
 public class TelemetryMessage {
+    /** Значение тега, ТИПИЗИРОВАННОЕ (число/bool) — иначе график на мониторе не строится. */
     private Object value;
+    /** Качество отсчёта: GOOD/BAD. */
     private String quality;
+    /** Момент снятия значения (sourceTime OPC UA / момент чтения Modbus). */
     private Instant timestamp;
 
     public TelemetryMessage() {}

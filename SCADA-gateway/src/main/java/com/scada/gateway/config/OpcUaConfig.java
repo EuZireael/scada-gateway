@@ -4,6 +4,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import java.util.List;
 
+/**
+ * Биндинг конфигурации контроллеров и тегов из controllers.yaml (префикс "opcua").
+ * Вложенные классы описывают сервер (OPC UA/Modbus endpoint) и его теги; из этой
+ * структуры ConfigurationService засевает БД при старте.
+ */
 @Component
 @ConfigurationProperties(prefix = "opcua")
 public class OpcUaConfig {
@@ -13,14 +18,22 @@ public class OpcUaConfig {
     public List<OpcUaServerConfig> getServers() { return servers; }
     public void setServers(List<OpcUaServerConfig> servers) { this.servers = servers; }
     
+    /** Один контроллер из YAML (OPC UA или Modbus) со своим списком тегов. */
     public static class OpcUaServerConfig {
+        /** Идентификатор из YAML (опционально; в БД ключ — name). */
         private String id;
+        /** Уникальное имя контроллера — ключ upsert в БД. */
         private String name;
+        /** Адрес: opc.tcp://… или modbus://host:port. */
         private String endpoint;
+        /** Политика безопасности OPC UA (сейчас NONE). */
         private String security;
+        /** Учётка OPC UA (если требуется). */
         private String username;
         private String password;
+        /** Опрашивать ли контроллер. */
         private boolean enabled;
+        /** Теги контроллера. */
         private List<TagConfig> tags;
         
         public String getId() { return id; }
@@ -48,14 +61,23 @@ public class OpcUaConfig {
         public void setTags(List<TagConfig> tags) { this.tags = tags; }
     }
     
+    /** Один тег/канал из YAML: адресация, тип, пороги и (ниже) параметры прибора/Modbus. */
     public static class TagConfig {
+        /** Адрес OPC UA-узла и одновременно имя канала. */
         private String nodeId;
+        /** Имя тега (путь канала). */
         private String name;
+        /** Тип данных (BOOLEAN/INT/FLOAT/…). */
         private String dataType;
+        /** Период опроса, мс. */
         private long pollingRate;
+        /** Опрашивать ли тег. */
         private boolean enabled;
+        /** Единица измерения. */
         private String unit;
+        /** Нижний порог аларма (если алармы считает шлюз). */
         private Double minValue;
+        /** Верхний порог аларма. */
         private Double maxValue;
 
         // Идентификатор канала в общей БД каналов (channel.node.id). Именно он

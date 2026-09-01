@@ -55,6 +55,11 @@ public class CommandConsumer {
         this.meterRegistry = meterRegistry;
     }
 
+    /**
+     * Обработчик одной команды из scada-commands: валидирует адресацию, отсекает дубли
+     * (идемпотентность A7), пишет значение в ПЛК через CommandService, инкрементит
+     * метрику по исходу и публикует результат обратно монитору + пишет событие в журнал.
+     */
     @KafkaListener(
             topics = "${kafka.topics.commands:scada-commands}",
             groupId = "${spring.kafka.consumer.group-id:scada-gateway-group}",
