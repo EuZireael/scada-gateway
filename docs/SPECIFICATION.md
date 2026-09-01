@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| **Технологии** | Spring Boot 3.2.4 · Java 21 · Eclipse Milo (OPC UA) · j2mod (Modbus) · Spring Kafka · PostgreSQL 16 |
+| **Технологии** | Spring Boot 3.5.16 · Java 21 · Eclipse Milo (OPC UA) · j2mod (Modbus) · Spring Kafka · PostgreSQL 16 |
 | **Протоколы поля** | OPC UA (типизированные узлы), Modbus TCP (holding-регистры, float32 LE / int16) |
 | **Шина** | Apache Kafka (KRaft), JSON-сообщения |
 | **База каналов** | `channel_dump.sql` — PostgreSQL EAV, идентичность канала = `node.id` |
@@ -68,7 +68,7 @@ flowchart LR
     G1 --> G2 --> G3
   end
 
-  KAFKA{{"Apache Kafka<br/>scada-telemetry / -alarms / -events / -commands"}}
+  KAFKA{{"Apache Kafka<br/>scada.tags / scada-alarms / scada-events / scada-commands"}}
   CHDB[("База каналов<br/>channel_dump.sql")]
 
   subgraph TOP["Верхний уровень (HMI)"]
@@ -222,7 +222,7 @@ OPC UA-сервер (:4840) и Modbus TCP-сервер (:5020) в одном п�
 
 Все сообщения — JSON. Ключ сообщения телеметрии = путь канала.
 
-### TelemetryMessage → `scada-telemetry`
+### TelemetryMessage → `scada.tags`
 ```json
 {
   "messageId": "uuid",
@@ -270,7 +270,7 @@ OPC UA-сервер (:4840) и Modbus TCP-сервер (:5020) в одном п�
 
 | Топик | Направление | Содержимое |
 |---|---|---|
-| `scada-telemetry` | шлюз → монитор | значения тегов |
+| `scada.tags` | шлюз → монитор | значения тегов |
 | `scada-alarms` | шлюз → монитор | постановка/снятие алармов |
 | `scada-events` | шлюз → монитор | соединения, качество, системные события |
 | `scada-commands` | монитор → шлюз | команды записи значения |
@@ -337,7 +337,7 @@ sequenceDiagram
     GW->>PLC: read value
     PLC-->>GW: value + quality
     GW->>GW: Alarm Engine (edge-триггер)
-    GW->>K: TELEMETRY → scada-telemetry
+    GW->>K: TELEMETRY → scada.tags
     opt значение вне уставки
       GW->>K: ALARM → scada-alarms
     end
@@ -412,7 +412,7 @@ kafka:
   enabled: true
   publish: { events: true, alarms: true }
   topics:
-    telemetry: scada-telemetry
+    telemetry: scada.tags
     alarms: scada-alarms
     events: scada-events
     commands: scada-commands
@@ -450,7 +450,7 @@ curl -s http://localhost:8888/actuator/health          # {"status":"UP"}
 
 # что уходит в Kafka (с хоста, external listener)
 docker exec scada-kafka /opt/kafka/bin/kafka-console-consumer.sh \
-  --bootstrap-server localhost:9094 --topic scada-telemetry --max-messages 5
+  --bootstrap-server localhost:9094 --topic scada.tags --max-messages 5
 
 # логи шлюза
 docker compose logs -f gateway

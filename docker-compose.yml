@@ -4,7 +4,7 @@
 #   ./up.sh                       # соберёт jar шлюза (если надо) и поднимет всё
 #   docker compose up -d --build  # если jar уже собран (target/*.jar)
 #
-#   postgres  — БД шлюза (scada_db); Hibernate ddl-auto=update создаёт схему сам
+#   postgres  — БД шлюза (scada_db); схема под Flyway (db/migration), ddl-auto=validate
 #   kafka     — брокер (KRaft, одна нода); топики авто-создаются при первой записи
 #   simulator — PLC-эмулятор: OPC UA (:4840) + Modbus TCP (:5020), replay архива
 #   gateway   — Spring Boot: опрашивает симулятор по 2 протоколам → Kafka

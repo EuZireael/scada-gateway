@@ -13,7 +13,7 @@
 
 | | |
 |---|---|
-| **Шлюз** | Spring Boot 3.2.4 · Java 21 · Eclipse Milo (OPC UA) · j2mod (Modbus) · Spring Kafka |
+| **Шлюз** | Spring Boot 3.5.16 · Java 21 · Eclipse Milo (OPC UA) · j2mod (Modbus) · Spring Kafka |
 | **Хранилище** | PostgreSQL 16 (теги, телеметрия, журнал `event_log`) |
 | **Шина** | Apache Kafka (KRaft), JSON-сообщения |
 | **Симулятор** | Python — проигрывает 5-суточный архив `BN1_MCA1` в реальном времени в родном формате контроллеров |
@@ -78,7 +78,7 @@ scada-gateway/
 
 | Топик | Направление | Содержимое |
 |---|---|---|
-| `scada-telemetry` | шлюз → монитор | значения тегов |
+| `scada.tags` | шлюз → монитор | значения тегов |
 | `scada-alarms` | шлюз → монитор | постановка/снятие алармов |
 | `scada-events` | шлюз → монитор | соединения, качество, системные события |
 | `scada-commands` | монитор → шлюз | команды записи |

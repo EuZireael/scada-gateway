@@ -59,7 +59,7 @@ rectangle "Полевой уровень — контроллеры ПЛК\n(и�
 }
 
 ' =====================  ШЛЮЗ (ЭТОТ ПРОЕКТ)  ================================
-rectangle "**SCADA Gateway**  (Spring Boot 3.2.4 / Java 21)   ←  ЭТОТ проект\n«переводчик»: железо (OPC UA/Modbus)  →  шина (Kafka)" as GW #E8EAF6 {
+rectangle "**SCADA Gateway**  (Spring Boot 3.5.16 / Java 21)   ←  ЭТОТ проект\n«переводчик»: железо (OPC UA/Modbus)  →  шина (Kafka)" as GW #E8EAF6 {
   component "**OPC UA Client**  (Eclipse Milo)\nЗАБИРАЕТ значения у Phoenix.\nВсе 594 узла — ОДНИМ батч-чтением\nclient.read(...) за цикл (было 594\nотдельных запроса). Кэш NodeId." as C_OPC
   component "**Modbus Client**  (j2mod)\nЗАБИРАЕТ значения у WAGO.\nЧтение holding-регистров (FC03),\nдекод float32 LE / int16." as C_MB
   component "**Connection Supervisor**\n@Scheduled, каждые 10 с\nсторож живости связи с контроллерами" as SUP
@@ -93,10 +93,10 @@ note bottom of CFG
 end note
 
 ' =====================  ШИНА СООБЩЕНИЙ  ===================================
-queue "**Apache Kafka**  (шина между шлюзом и продуктом)\nscada-telemetry — значения тегов (основной поток)\nscada-alarms — алармы (если включены в шлюзе)\nscada-events — журнал связи/системные\nscada-commands / scada-command-results — команды оператора" as KAFKA
+queue "**Apache Kafka**  (шина между шлюзом и продуктом)\nscada.tags — значения тегов (основной поток)\nscada-alarms — алармы (если включены в шлюзе)\nscada-events — журнал связи/системные\nscada-commands / scada-command-results — команды оператора" as KAFKA
 
 ' =====================  БД ШЛЮЗА (РАНТАЙМ)  ================================
-database "**БД шлюза** — scada_db (PostgreSQL :5433)\nсобственная операционная база.\nСхему создаёт Hibernate (ddl-auto=update):\ntags · controllers · telemetry · event_log · alarms\nЗапись телеметрии — БАТЧем (saveAll), флаг\ngateway.persist-telemetry (по умолч. ВКЛ)" as GWDB
+database "**БД шлюза** — scada_db (PostgreSQL :5433)\nсобственная операционная база.\nСхема под Flyway (ddl-auto=validate только сверяет):\ntags · controllers · telemetry · event_log · alarms\nЗапись телеметрии — БАТЧем (saveAll), флаг\ngateway.persist-telemetry (по умолч. ВКЛ)" as GWDB
 
 ' =====================  РЕЕСТР КАНАЛОВ (ОФЛАЙН-ИСТОЧНИК)  ==================
 database "**Реестр каналов** — channel_dump.sql (EAV)\nnode / param / template · 3449 узлов ·\n2471 канал · 17542 param.\nОБЩИЙ источник правды о каналах (node.id)." as CHDB
@@ -178,7 +178,7 @@ legend right
   <b>2.</b> Клиенты шлюза (Milo / j2mod) забирают значения. Configuration
       Service заранее раздаёт им список тегов (что и с каким адресом читать),
       загруженный на старте из controllers.yaml.
-  <b>3.</b> Значения уходят в Kafka Producers → топик scada-telemetry с
+  <b>3.</b> Значения уходят в Kafka Producers → топик scada.tags с
       tagId=node.id. Параллельно (по флагам) пишутся батчем в БД шлюза и
       проверяются Alarm Engine.
   <b>4.</b> Connection Supervisor не в потоке данных — он СТОРОЖ: следит,
@@ -233,7 +233,7 @@ loop каждый цикл опроса (в родном поколении по
   opt gateway.persist-telemetry = true
     GW -> DB : накопить и записать телеметрию БАТЧем (saveAll)
   end
-  GW -> K  : TELEMETRY {tagId=node.id, value,\nmetadata{device,field,type}} → scada-telemetry
+  GW -> K  : TELEMETRY {tagId=node.id, value,\nmetadata{device,field,type}} → scada.tags
   opt значение вне уставки (если алармы включены)
     GW -> K : ALARM {severity, threshold, cleared} → scada-alarms
   end
