@@ -1,3 +1,10 @@
+"""
+Modbus TCP-сервер симулятора (обёртка над pymodbus).
+
+Держит один slave-контекст holding-регистров и крутит TCP-сервер в отдельном
+daemon-потоке (StartTcpServer блокирующий). PLCSimulator на каждом цикле кладёт сюда
+свежие значения через update_register (FLOAT занимает 2 регистра, little-endian по словам).
+"""
 import logging
 import threading
 from pymodbus.server.sync import StartTcpServer
@@ -11,6 +18,7 @@ class ModbusServer:
     """Modbus TCP сервер для симуляции PLC"""
 
     def __init__(self, port: int = 5020):
+        """Запоминает порт; контекст регистров и поток создаются позже в start()."""
         self.port = port
         self.context = None
         self.running = False

@@ -1,3 +1,12 @@
+"""
+Ядро симулятора ПЛК: поднимает OPC UA-сервер (asyncua) и Modbus TCP-сервер, держит
+Data Blocks с тегами и крутит цикл обновления значений.
+
+Цикл (update_loop) на каждом шаге: подставляет значения из архива (replay),
+записывает свежие значения в OPC UA-узлы (RW-теги, наоборот, читает обратно — чтобы
+не затирать команду оператора) и обновляет Modbus-регистры. OPC UA-теги группируются
+в объектную модель прибор→поля, как у настоящего ПЛК. Точка входа — simulator.py.
+"""
 from typing import Dict, List
 from asyncua import Server, ua
 import asyncio
@@ -13,8 +22,11 @@ logger = logging.getLogger(__name__)
 
 class PLCSimulator:
     """Главный класс симулятора контроллера с поддержкой OPC UA и Modbus TCP"""
-    
+
     def __init__(self, config: dict):
+        """Разбирает конфиг (plc: id/name/endpoint/update_rate, modbus_port, replay),
+        готовит OPC UA-сервер и — если replay включён — движок воспроизведения архива.
+        Endpoint и modbus-порт можно переопределить через env (OPCUA_ENDPOINT/MODBUS_PORT)."""
         self.config = config
         self.plc_id = config['plc']['id']
         self.name = config['plc']['name']
