@@ -124,6 +124,14 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Встроенный Kafka-брокер в JVM (@EmbeddedKafka) для контрактного теста
+             телеметрии — round-trip продюсер→брокер→консьюмер без Docker. -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
