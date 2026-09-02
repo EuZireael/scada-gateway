@@ -192,6 +192,19 @@ public class ConfigurationService {
             .collect(Collectors.toMap(ControllerEntity::getId, c -> c));
 
         List<TagEntity> tags = tagRepository.findByEnabledTrue();
+
+        // Проставляем тегам ЗАГРУЖЕННЫЙ контроллер из controllerCache вместо ленивого
+        // прокси (findByEnabledTrue его не подгружает). Иначе доступ к полям контроллера
+        // (endpoint) ВНЕ этой @Transactional-сессии — напр. в CommandService.writeModbus/
+        // writePac — падает LazyInitializationException. getId() на прокси безопасен.
+        for (TagEntity t : tags) {
+            ControllerEntity ctrl = t.getController();
+            if (ctrl != null) {
+                ControllerEntity loaded = controllerCache.get(ctrl.getId());
+                if (loaded != null) t.setController(loaded);
+            }
+        }
+
         tagCache = tags.stream()
             .collect(Collectors.toMap(TagEntity::getId, t -> t));
 

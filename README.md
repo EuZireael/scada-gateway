@@ -16,7 +16,7 @@
 
 | | |
 |---|---|
-| **Шлюз** | Spring Boot 3.5.16 · Java 21 · Eclipse Milo (OPC UA) · j2mod (Modbus) · Spring Kafka |
+| **Шлюз** | Spring Boot 3.5.16 · Java 21 · Eclipse Milo (OPC UA) · j2mod (Modbus) · LuaJ (PAC) · Spring Kafka |
 | **Хранилище** | PostgreSQL 16 (теги, телеметрия, журнал `event_log`) |
 | **Шина** | Apache Kafka (KRaft), JSON-сообщения |
 | **Симулятор** | Python — проигрывает 5-суточный архив `BN1_MCA1` в реальном времени в родном формате контроллеров |
@@ -32,7 +32,7 @@
 ```
 
 Порты на хост: шлюз `:8888`, Kafka `:9094` (для монитора), PostgreSQL `:5433`,
-симулятор `:4840` (OPC UA) / `:5020` (Modbus).
+симулятор `:4840` (OPC UA) / `:5020` (Modbus) / `:10000` (PAC).
 
 ```bash
 curl -s http://localhost:8888/actuator/health          # {"status":"UP"}
@@ -43,10 +43,10 @@ curl -s http://localhost:8888/actuator/health          # {"status":"UP"}
 ```
 Контроллеры (ПЛК)            SCADA Gateway                 Верхний уровень
 ┌───────────────────┐      ┌────────────────────┐        ┌──────────────┐
-│ Phoenix / OPC UA   │────▶│ OPC UA + Modbus     │        │ Монитор       │
+│ Phoenix / OPC UA   │────▶│ OPC UA·Modbus·PAC   │        │ Монитор       │
 │ WAGO    / Modbus   │────▶│ обработка · алармы  │──Kafka▶│ Редактор      │
-└───────────────────┘      │ события · reconnect │        │ Мобильное     │
-                           └─────────┬──────────┘        └──────────────┘
+│ PAC / driver-master│────▶│ события · reconnect │        │ Мобильное     │
+└───────────────────┘      └─────────┬──────────┘        └──────────────┘
                                      │ tagId = node.id
                               ┌──────▼───────┐
                               │ База каналов  │  channel_dump.sql (EAV)
@@ -59,13 +59,15 @@ curl -s http://localhost:8888/actuator/health          # {"status":"UP"}
 
 ## Ключевые возможности
 
-- **Два протокола одновременно** — OPC UA (типизированные узлы) и Modbus TCP (float32 LE / int16).
+- **Три протокола одновременно** — OPC UA (типизированные узлы), Modbus TCP (float32 LE / int16)
+  и PAC (`driver-master`, Savushkin/ptusa: TCP + zlib(Lua), опрос через LuaJ).
 - **Привязка к базе каналов** — 2471 канал из `channel_dump.sql`, `tagId = node.id`.
 - **Авто-переподключение** — супервизор (`@Scheduled`), детект «тихой» смерти сессии,
   токен поколения против flapping.
 - **Журнал и события** — `event_log` в БД + топики `scada-events` / `scada-alarms`.
 - **Алармы по уставкам** — edge-триггер, пороги из перцентилей p1/p99 архива, гистерезис.
-- **Команды оператора** — запись значения в OPC UA-тег через `scada-commands`.
+- **Команды оператора** — запись значения в OPC UA / Modbus / PAC-тег через `scada-commands`
+  (проверка writable: датчик RO не перезаписать).
 
 ## Структура
 

@@ -79,12 +79,14 @@ services:
     container_name: scada-simulator
     environment:
       # Сервер анонсирует резолвимое в сети имя (иначе Milo после discovery
-      # не переподключится). plc.py читает OPCUA_ENDPOINT/MODBUS_PORT из env.
+      # не переподключится). plc.py читает OPCUA_ENDPOINT/MODBUS_PORT/PAC_PORT из env.
       OPCUA_ENDPOINT: "opc.tcp://simulator:4840"
       MODBUS_PORT: "5020"
+      PAC_PORT: "10000"                 # третий протокол — PAC (driver-master)
     ports:
       - "4840:4840"
       - "5020:5020"
+      - "10000:10000"                   # PAC (driver-master) — для отладки с хоста
     restart: unless-stopped
     networks: [scada]
 
