@@ -264,6 +264,9 @@ def main():
     ap.add_argument("profile", help="имя профиля из profiles.yaml")
     ap.add_argument("--keep", action="store_true", help="не гасить стек после теста")
     ap.add_argument("--build", action="store_true", help="пересобрать образы перед стартом")
+    ap.add_argument("--min-rate", type=float, default=None,
+                    help="CI-гейт: упасть (exit 1), если достигнутый throughput любой "
+                         "ступени ниже этого значения (msg/s)")
     args = ap.parse_args()
 
     # Построчная буферизация stdout: иначе python-принты копятся в буфере и в логе
@@ -351,10 +354,31 @@ def main():
     print(f"\n✅ готово. Метрики: {csv_path}")
     summarize(csv_path)
 
+    # CI-гейт: если задан порог — проверяем достигнутый throughput и роняем
+    # сборку (exit≠0) при недоборе. Без --min-rate тест остаётся справочным.
+    if args.min_rate is not None and not check_min_rate(csv_path, args.min_rate):
+        sys.exit(f"❌ нагрузочный гейт НЕ пройден (порог {args.min_rate:g} msg/s)")
+
+
+def _stable_peak(rates):
+    """Устойчивый «достигнутый» rate ступени: медиана ВЕРХНЕЙ половины замеров
+    (отсекает разгон в начале и разовые просадки). Пустой список → 0.0."""
+    import statistics
+    return statistics.median(sorted(rates)[len(rates) // 2:]) if rates else 0.0
+
+
+def _rung_peaks(rows):
+    """{ступень: устойчивый достигнутый rate} по строкам CSV (пустые rate пропускаются)."""
+    by_rung = {}
+    for r in rows:
+        by_rung.setdefault(r["rung"], []).append(r)
+    return {rung: _stable_peak([float(x["produced_rate"]) for x in rs
+                                if x["produced_rate"] not in ("", None)])
+            for rung, rs in by_rung.items()}
+
 
 def summarize(csv_path):
-    """Короткая сводка по ступеням: медленный максимум produce rate и пик heap."""
-    import statistics
+    """Короткая сводка по ступеням: устойчивый produce rate и пик heap."""
     rows = list(csv.DictReader(open(csv_path)))
     if not rows:
         return
@@ -367,11 +391,26 @@ def summarize(csv_path):
         rates = [float(x["produced_rate"]) for x in rs if x["produced_rate"] not in ("", None)]
         heaps = [float(x["heap_mb"]) for x in rs if x["heap_mb"] not in ("", None)]
         exp = next((float(x["expected_rate"]) for x in rs if x["expected_rate"] not in ("", None)), 0)
-        # берём медиану верхней половины — устойчивый «достигнутый» rate
-        peak = statistics.median(sorted(rates)[len(rates)//2:]) if rates else 0
+        peak = _stable_peak(rates)
         pct = round(100 * peak / exp) if exp else 0
         print(f"{rung:>16}  {exp:>11,.0f}  {peak:>11,.0f}  {pct:>7}%  "
               f"{max(heaps) if heaps else 0:>7.0f}MB")
+
+
+def check_min_rate(csv_path, min_rate):
+    """CI-гейт: True, если КАЖДАЯ ступень достигла ≥ min_rate msg/s.
+    Пустой CSV (стек не поднялся / шлюз не ответил) — тоже провал."""
+    peaks = _rung_peaks(list(csv.DictReader(open(csv_path))))
+    print(f"\n── гейт: порог ≥ {min_rate:,.0f} msg/s ──")
+    if not peaks:
+        print("  ❌ нет данных о throughput (стек не поднялся?)")
+        return False
+    ok = True
+    for rung, peak in peaks.items():
+        passed = peak >= min_rate
+        ok = ok and passed
+        print(f"  {'✅' if passed else '❌'} {rung}: {peak:,.0f} msg/s")
+    return ok
 
 
 if __name__ == "__main__":
