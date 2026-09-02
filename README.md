@@ -74,7 +74,7 @@ curl -s http://localhost:8888/actuator/health          # {"status":"UP"}
 ```
 scada-gateway/
 ├── SCADA-gateway/          # шлюз (Spring Boot)
-├── plc-simulator/          # PLC-симулятор (Python): OPC UA + Modbus, replay архива
+├── plc-simulator/          # PLC-симулятор (Python): OPC UA + Modbus + PAC, replay архива
 ├── docs/                   # спецификация + UML-схема
 ├── docker-compose.yml      # единый стек (postgres + kafka + simulator + gateway)
 └── up.sh                   # запуск одной командой

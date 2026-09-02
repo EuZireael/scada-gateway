@@ -212,7 +212,7 @@ skinparam sequence {
 
 actor "Оператор" as OP
 participant "Контроллер ПЛК\n(в стенде — симулятор)" as PLC
-participant "Gateway\nOPC UA / Modbus" as GW
+participant "Gateway\nOPC UA / Modbus / PAC" as GW
 database "БД шлюза\nscada_db" as DB
 queue "Kafka" as K
 participant "Монитор\n(runtime SCADA)" as MON
@@ -220,7 +220,7 @@ participant "Монитор\n(runtime SCADA)" as MON
 == Инициализация (один раз при старте) ==
 GW -> DB : upsert 2471 тега из controllers.yaml (tagId=node.id)
 note right of GW : Теги = "что читать": адрес, тип, контроллер, уставки.
-GW -> PLC : подключиться — OPC UA :4840 и Modbus :5020
+GW -> PLC : подключиться — OPC UA :4840, Modbus :5020 и PAC :10000
 note left of PLC : Это установка СВЯЗИ С КОНТРОЛЛЕРОМ по протоколу.
 GW -> K   : событие CONNECTED → scada-events
 
@@ -287,14 +287,14 @@ skinparam note {
 }
 
 node "Хост (Docker Desktop / compose)" as HOST {
-  node "scada-simulator\npython:3.11\nиграет ПЛК: OPC UA :4840, Modbus :5020" as N_SIM
+  node "scada-simulator\npython:3.11\nиграет ПЛК: OPC UA :4840, Modbus :5020, PAC :10000" as N_SIM
   node "scada-gateway\ntemurin-21-jre\nHTTP :8888 (actuator/health)" as N_GW
   queue "scada-kafka\napache/kafka (KRaft)\nвнутри сети kafka:9092\nна хост localhost:9094" as N_K
   database "scada-postgres\npostgres:16 → scada_db\nна хост localhost:5433" as N_PG
 }
 node "Монитор / клиент\n(снаружи стенда)" as N_MON
 
-N_SIM --> N_GW  : связь с «контроллерами»\nOPC UA + Modbus (SIM_HOST=simulator)
+N_SIM --> N_GW  : связь с «контроллерами»\nOPC UA + Modbus + PAC (SIM_HOST=simulator)
 N_GW  --> N_K   : публикует телеметрию/события kafka:9092
 N_GW  --> N_PG  : своя БД jdbc postgres:5432 (scada_db)
 N_K   --> N_MON : Монитор читает топики (localhost:9094)

@@ -23,7 +23,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Команды записи в ПЛК (OPC UA / Modbus) от Monitor Srv.
+ * Команды записи в ПЛК (OPC UA / Modbus / PAC) от Monitor Srv.
  *
  * <p>Выделено из god-класса OpcUaClientServiceDB (шаг 2d декомпозиции). Живыми картами
  * (кэш тегов, OPC UA-клиенты) по-прежнему владеет god-класс — сюда они приходят через

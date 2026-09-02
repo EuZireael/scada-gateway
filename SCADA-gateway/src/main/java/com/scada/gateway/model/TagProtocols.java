@@ -3,7 +3,7 @@ package com.scada.gateway.model;
 import com.scada.gateway.model.entity.TagEntity;
 
 /**
- * Классификация протокола тега (OPC UA / Modbus) для маршрутизации опроса и команд.
+ * Классификация протокола тега (OPC UA / Modbus / PAC) для маршрутизации опроса и команд.
  *
  * <p>Выделено из god-класса OpcUaClientServiceDB — общие для опроса и команд чистые
  * функции. Живут в пакете model (относятся к {@link TagEntity}, а не к opcua/modbus).

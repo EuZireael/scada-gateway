@@ -8,7 +8,7 @@
 #   1. генерит согласованную пару конфигов (gen_config.py) под размер/частоту;
 #   2. поднимает стек (docker compose + override), ждёт готовности шлюза;
 #   3. снимает метрики в CSV каждые metrics_interval_s:
-#        • produce rate  — прирост суммарного offset'а топика scada-telemetry
+#        • produce rate  — прирост суммарного offset'а топика scada.tags
 #                          (= реально ли шлюз выдаёт ожидаемый tags/poll поток);
 #        • JVM шлюза      — heap, CPU, потоки, GC (из /actuator/metrics);
 #   4. для лестницы (stress) — повторяет по ступеням; для wave — пауза/возврат
