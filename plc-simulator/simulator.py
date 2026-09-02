@@ -84,13 +84,18 @@ class SimulatorApplication:
         
         self.running = True
         
-        # Устанавливаем обработчики сигналов
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(
-                sig,
-                lambda s=sig: self.handle_signal(s)
-            )
+        # Устанавливаем обработчики сигналов.
+        # loop.add_signal_handler() реализован только в Unix-петле asyncio; на
+        # нативном Windows он кидает NotImplementedError прямо при регистрации,
+        # и симулятор не стартует. На Windows отдельный обработчик не нужен —
+        # Ctrl+C поднимает штатный KeyboardInterrupt, он ловится в main().
+        if sys.platform != "win32":
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(
+                    sig,
+                    lambda s=sig: self.handle_signal(s)
+                )
         
         try:
             # Запускаем PLC в отдельной задаче
