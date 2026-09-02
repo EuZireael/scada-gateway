@@ -32,6 +32,7 @@ class Protocol(Enum):
     """Протокол, по которому тег отдаётся наружу."""
     OPCUA = "opcua"
     MODBUS = "modbus"
+    PAC = "pac"        # driver-master (PAC-контроллеры Savushkin/ptusa), см. core/pac_server.py
 
 class Tag:
     """Модель тега (переменной) контроллера с поддержкой OPC UA и Modbus"""

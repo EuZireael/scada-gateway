@@ -16,6 +16,7 @@ from pathlib import Path
 from .data_block import DataBlock
 from .tag import Tag
 from .modbus_server import ModbusServer
+from .pac_server import PACServer
 from .archive_replay import ArchiveReplay
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,12 @@ class PLCSimulator:
         # Modbus порт: env MODBUS_PORT или из конфига (по умолчанию 5020).
         self.modbus_port = int(os.environ.get('MODBUS_PORT', config.get('modbus_port', 5020)))
         self.modbus_server = None
-        
+
+        # PAC-порт (протокол driver-master): env PAC_PORT или из конфига (по умолчанию 10000).
+        # Сервер поднимается только если в конфиге есть теги с protocol: pac.
+        self.pac_port = int(os.environ.get('PAC_PORT', config.get('pac_port', 10000)))
+        self.pac_server = None
+
         # OPC UA сервер
         self.server = Server()
         self.namespace_idx = None
@@ -162,8 +168,10 @@ class PLCSimulator:
                 # поэтому привязка шлюза к базе каналов остаётся прежней.
                 device_nodes = {}   # имя прибора -> object-node
                 for tag in db.get_all_tags():
-                    # Пропускаем Modbus теги для OPC UA
-                    if hasattr(tag, 'protocol') and getattr(tag.protocol, "value", tag.protocol) == "modbus":
+                    # В OPC UA-адресное пространство берём ТОЛЬКО opcua-теги
+                    # (modbus обслуживает Modbus-сервер, pac — PAC-сервер).
+                    proto = getattr(tag, 'protocol', None)
+                    if proto is not None and getattr(proto, "value", proto) != "opcua":
                         continue
 
                     parent = db_node
@@ -289,7 +297,68 @@ class PLCSimulator:
                         
                     except Exception as e:
                         logger.debug(f"Error updating Modbus register {modbus_address} for tag {tag.name}: {e}")
-    
+
+    def _pac_tags(self):
+        """Все теги с protocol=pac (третий тип контроллера, протокол driver-master)."""
+        result = []
+        for db in self.data_blocks.values():
+            for tag in db.get_all_tags():
+                proto = getattr(tag, 'protocol', None)
+                if proto is not None and getattr(proto, "value", proto) == "pac":
+                    result.append(tag)
+        return result
+
+    async def init_pac_server(self):
+        """Инициализация PAC-сервера (driver-master). Поднимается только если есть pac-теги."""
+        pac_tags = self._pac_tags()
+        if not pac_tags:
+            return
+        # Объектная модель прибор->поля (как у настоящего PAC) — для CMD_GET_DEVICES.
+        devmap = {}
+        for tag in pac_tags:
+            dev = getattr(tag, 'device', None) or tag.name
+            entry = devmap.setdefault(dev, {
+                'device': dev,
+                'dev_type': getattr(tag, 'dev_type', '') or 'DEV',
+                'fields': [],
+            })
+            entry['fields'].append({'field': getattr(tag, 'field', None) or tag.name,
+                                    'node_id': tag.address})
+        try:
+            self.pac_server = PACServer(self.pac_port, pac_name=self.name)
+            self.pac_server.set_devices(list(devmap.values()))
+            self.pac_server.on_write = self._pac_write
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.pac_server.start)
+            logger.info(f"PAC server started on port {self.pac_port} "
+                        f"({len(pac_tags)} tags, {len(devmap)} devices)")
+        except Exception as e:
+            logger.error(f"Failed to start PAC server: {e}")
+
+    async def update_pac_tags(self):
+        """Обновление снимка значений PAC-сервера (node.id -> текущее значение тега)."""
+        if not self.pac_server or not self.pac_server.running:
+            return
+        snapshot = {}
+        for tag in self._pac_tags():
+            try:
+                value = tag.value
+                if value is not None:
+                    snapshot[tag.address] = value
+            except Exception as e:
+                logger.debug(f"Error reading PAC tag {tag.address}: {e}")
+        self.pac_server.update_snapshot(snapshot)
+
+    def _pac_write(self, device, field, value):
+        """Команда записи драйвера (EXEC_DEVICE_COMMAND) -> установить RW-тег device.field."""
+        for tag in self._pac_tags():
+            if (getattr(tag, 'device', None) == device
+                    and getattr(tag, 'field', None) == field
+                    and getattr(getattr(tag, 'access', None), 'value', None) == "RW"):
+                tag.value = value
+                return
+        logger.warning(f"PAC: RW-тег {device}.{field} не найден — запись отброшена")
+
     def apply_replay(self):
         """Подставить в теги текущие значения из архива (replay)."""
         if not self.replay:
@@ -329,9 +398,11 @@ class PLCSimulator:
                     
                     # Обновляем значения в OPC UA сервере
                     for tag in db.get_all_tags():
-                        # Пропускаем Modbus теги для OPC UA
-                        if hasattr(tag, 'protocol') and getattr(tag.protocol, "value", tag.protocol) == "modbus":
-                            modbus_update_count += 1
+                        # В OPC UA пишем только opcua-теги; modbus/pac обслуживают свои серверы.
+                        proto = getattr(tag, 'protocol', None)
+                        if proto is not None and getattr(proto, "value", proto) != "opcua":
+                            if getattr(proto, "value", proto) == "modbus":
+                                modbus_update_count += 1
                             continue
                         
                         if hasattr(tag, 'opcua_node') and tag.opcua_node:
@@ -358,7 +429,10 @@ class PLCSimulator:
                 
                 # Обновляем Modbus регистры
                 await self.update_modbus_tags()
-                
+
+                # Обновляем снимок значений PAC-сервера (driver-master)
+                await self.update_pac_tags()
+
                 self.read_count += update_count
                 self.write_count += modbus_update_count
                 last_time = current_time
@@ -385,7 +459,10 @@ class PLCSimulator:
             
             # Инициализация Modbus TCP
             await self.init_modbus_server()
-            
+
+            # Инициализация PAC-сервера (driver-master) — только если есть pac-теги
+            await self.init_pac_server()
+
             # Запуск сервера
             async with self.server:
                 logger.info(f"PLC Simulator running at {self.endpoint}")
@@ -410,7 +487,16 @@ class PLCSimulator:
                     logger.info("Available Modbus tags:")
                     for tag_info in modbus_tags:
                         logger.info(tag_info)
-                
+
+                # Показываем PAC теги (driver-master)
+                pac_tags = self._pac_tags()
+                if pac_tags:
+                    logger.info("Available PAC tags (driver-master):")
+                    for tag in pac_tags:
+                        dev = getattr(tag, 'device', '') or ''
+                        fld = getattr(tag, 'field', '') or ''
+                        logger.info(f"  {tag.address} ({dev}.{fld})")
+
                 logger.info("=" * 50)
                 logger.info("Press Ctrl+C to stop")
                 
@@ -455,7 +541,14 @@ class PLCSimulator:
                 logger.info("Modbus TCP server stopped")
             except Exception as e:
                 logger.error(f"Error stopping Modbus server: {e}")
-        
+
+        if self.pac_server:
+            try:
+                self.pac_server.stop()
+                logger.info("PAC server stopped")
+            except Exception as e:
+                logger.error(f"Error stopping PAC server: {e}")
+
         if self.server_running:
             try:
                 self.server.stop()
