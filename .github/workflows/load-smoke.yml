@@ -51,7 +51,7 @@ jobs:
       # Python гоняет оркестратор нагрузки (loadtest/run.py); из внешнего ему нужен
       # только PyYAML (остальное — стандартная библиотека).
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Install harness deps
@@ -65,7 +65,7 @@ jobs:
       # Метрики забираем ВСЕГДА — и на успехе, и на провале гейта (CSV уже записан).
       - name: Upload metrics CSV
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: loadtest-smoke-metrics
           path: loadtest/metrics/*.csv

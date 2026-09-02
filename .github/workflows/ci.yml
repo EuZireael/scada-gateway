@@ -43,7 +43,7 @@ jobs:
       # какой тест упал, не заходя в раннер (доступно во вкладке Actions).
       - name: Upload test reports
         if: always()   # даже если сборка упала — отчёт всё равно нужен
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: surefire-reports
           path: SCADA-gateway/target/surefire-reports/
@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'   # совпадает с образом симулятора (python:3.11-slim)
 
