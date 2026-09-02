@@ -1,6 +1,7 @@
 package com.scada.gateway.command;
 
 import com.scada.gateway.modbus.ModbusClientService;
+import com.scada.gateway.pac.PacClientService;
 import com.scada.gateway.model.entity.ControllerEntity;
 import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.service.EventLogService;
@@ -33,13 +34,14 @@ class CommandServiceTest {
     @Mock TagCatalog tagCatalog;
     @Mock OpcUaClientRegistry opcUaClients;
     @Mock ModbusClientService modbus;
+    @Mock PacClientService pac;
     @Mock EventLogService eventLog;
 
     CommandService service;
 
     @BeforeEach
     void setUp() {
-        service = new CommandService(tagCatalog, opcUaClients, modbus, eventLog, 5000L);
+        service = new CommandService(tagCatalog, opcUaClients, modbus, pac, eventLog, 5000L);
     }
 
     private static TagEntity writableModbusTag() {
@@ -124,5 +126,53 @@ class CommandServiceTest {
         when(tagCatalog.byName("nope")).thenReturn(null);
         CommandOutcome out = service.writeTagByName("nope", 1, "INT");
         assertEquals(CommandStatus.REJECTED_UNKNOWN_TAG, out.status);
+    }
+
+    private static TagEntity writablePacTag() {
+        TagEntity t = new TagEntity();
+        t.setName("PAC_DEMO.1V1.ST");
+        t.setProtocol("pac");
+        t.setNodeId("pac:9001");
+        t.setChannelId(9001L);
+        t.setDeviceName("1V1");
+        t.setFieldName("ST");
+        t.setDataType("BOOLEAN");
+        t.setWritable(true);
+        ControllerEntity c = new ControllerEntity();
+        c.setEndpoint("pac://sim:10000");
+        t.setController(c);
+        return t;
+    }
+
+    @Test
+    @DisplayName("PAC-запись BOOLEAN → pac.write(host,port,device,field,true) → APPLIED")
+    void pac_success_writes_command() {
+        when(tagCatalog.byId(1L)).thenReturn(writablePacTag());
+        when(pac.write("sim", 10000, "1V1", "ST", true)).thenReturn(true);
+        CommandOutcome out = service.writeTag(1L, true, "BOOLEAN");
+        assertTrue(out.success);
+        assertEquals(CommandStatus.APPLIED, out.status);
+        verify(pac).write("sim", 10000, "1V1", "ST", true);   // адрес = device.field, bool → 1/0 в PacLua
+    }
+
+    @Test
+    @DisplayName("PAC write вернул false (нет соединения опроса) → FAILED_WRITE")
+    void pac_write_false_is_failed_write() {
+        when(tagCatalog.byId(1L)).thenReturn(writablePacTag());
+        when(pac.write(anyString(), anyInt(), anyString(), anyString(), any())).thenReturn(false);
+        CommandOutcome out = service.writeTag(1L, true, "BOOLEAN");
+        assertFalse(out.success);
+        assertEquals(CommandStatus.FAILED_WRITE, out.status);
+    }
+
+    @Test
+    @DisplayName("PAC-датчик (writable=false) → REJECTED_NOT_WRITABLE, БЕЗ похода в контроллер")
+    void pac_not_writable_rejected() {
+        TagEntity t = writablePacTag();
+        t.setWritable(false);
+        when(tagCatalog.byId(1L)).thenReturn(t);
+        CommandOutcome out = service.writeTag(1L, true, "BOOLEAN");
+        assertEquals(CommandStatus.REJECTED_NOT_WRITABLE, out.status);
+        verifyNoInteractions(pac);
     }
 }
