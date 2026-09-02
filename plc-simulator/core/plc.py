@@ -549,13 +549,13 @@ class PLCSimulator:
             except Exception as e:
                 logger.error(f"Error stopping PAC server: {e}")
 
-        if self.server_running:
-            try:
-                self.server.stop()
-                logger.info("OPC UA server stopped")
-            except Exception as e:
-                logger.error(f"Error stopping server: {e}")
-        
+        # OPC UA-сервер (asyncua) здесь останавливать НЕ нужно: его жизненным циклом
+        # владеет `async with self.server:` в start(), чей __aexit__ сам делает
+        # await self.server.stop() при отмене задачи. Прежний явный self.server.stop()
+        # был багом — Server.stop() это КОРУТИНА, вызванная без await: она молча
+        # отбрасывалась (RuntimeWarning: coroutine never awaited) и ничего не гасила
+        # поверх уже остановленного сервера. Modbus/PAC-серверы (выше) — наоборот,
+        # не под async with, поэтому их останавливаем здесь явно.
         self.server_running = False
     
     def get_stats(self):
