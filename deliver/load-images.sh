@@ -15,8 +15,8 @@ echo "Движок: $ENGINE"
 
 for f in images/postgres-16.tar.gz \
          images/cp-kafka.tar.gz \
-         images/scada-simulator-1.0.tar.gz \
-         images/scada-gateway-1.0.tar.gz; do
+         images/scada-simulator-0.1.0.tar.gz \
+         images/scada-gateway-0.1.0.tar.gz; do
   echo "Загружаю $f ..."
   $ENGINE load -i "$f"
 done
