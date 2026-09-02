@@ -22,7 +22,7 @@ from .archive_replay import ArchiveReplay
 logger = logging.getLogger(__name__)
 
 class PLCSimulator:
-    """Главный класс симулятора контроллера с поддержкой OPC UA и Modbus TCP"""
+    """Главный класс симулятора контроллера с поддержкой OPC UA, Modbus TCP и PAC (driver-master)"""
 
     def __init__(self, config: dict):
         """Разбирает конфиг (plc: id/name/endpoint/update_rate, modbus_port, replay),

@@ -35,7 +35,7 @@ class Protocol(Enum):
     PAC = "pac"        # driver-master (PAC-контроллеры Savushkin/ptusa), см. core/pac_server.py
 
 class Tag:
-    """Модель тега (переменной) контроллера с поддержкой OPC UA и Modbus"""
+    """Модель тега (переменной) контроллера с поддержкой OPC UA, Modbus и PAC"""
 
     def __init__(self, config):
         """Строит тег из секции YAML: адресация (address/replay_source, opcua/modbus),
