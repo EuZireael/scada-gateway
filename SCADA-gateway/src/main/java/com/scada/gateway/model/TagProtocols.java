@@ -20,13 +20,22 @@ public final class TagProtocols {
     }
 
     /**
-     * OPC UA ли тег. Явный protocol=modbus сразу исключает; иначе OPC UA при
+     * OPC UA ли тег. Явный protocol=modbus/pac сразу исключает; иначе OPC UA при
      * protocol=opcua ИЛИ при наличии непустого nodeId (фолбэк без поля protocol).
+     *
+     * <p>ВАЖНО: pac исключаем явно — у PAC-тегов nodeId непустой (синтетический
+     * "pac:9001"), иначе фолбэк по nodeId ошибочно счёл бы их OPC UA.
      */
     public static boolean isOpcUaTag(TagEntity tag) {
-        if ("modbus".equalsIgnoreCase(tag.getProtocol())) return false;
-        return "OPCUA".equalsIgnoreCase(tag.getProtocol()) ||
+        String protocol = tag.getProtocol();
+        if ("modbus".equalsIgnoreCase(protocol) || "pac".equalsIgnoreCase(protocol)) return false;
+        return "OPCUA".equalsIgnoreCase(protocol) ||
                (tag.getNodeId() != null && !tag.getNodeId().isEmpty());
+    }
+
+    /** PAC ли тег (протокол driver-master): строго по полю protocol=pac. */
+    public static boolean isPacTag(TagEntity tag) {
+        return "pac".equalsIgnoreCase(tag.getProtocol());
     }
 
     /**
