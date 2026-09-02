@@ -300,6 +300,9 @@ def main():
     # CSV
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_path = HERE / "metrics" / f"{args.profile}_{stamp}.csv"
+    # loadtest/metrics/ в .gitignore → в свежем checkout (CI) её нет; создаём сами,
+    # иначе open(csv_path, "w") падает FileNotFoundError ещё до подъёма стека.
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
     fields = ["t_s", "rung", "tags", "poll_ms", "expected_rate", "produced_total",
               "produced_rate", "achieved_pct", "heap_mb", "cpu_pct", "threads",
               "gc_count", "gc_time_s", "note"]
