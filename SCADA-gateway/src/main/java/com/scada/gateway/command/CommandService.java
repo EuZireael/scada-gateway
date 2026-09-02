@@ -2,6 +2,8 @@ package com.scada.gateway.command;
 
 import com.scada.gateway.modbus.ModbusClientService;
 import com.scada.gateway.modbus.ModbusEndpoint;
+import com.scada.gateway.pac.PacClientService;
+import com.scada.gateway.pac.PacEndpoint;
 import com.scada.gateway.model.TagProtocols;
 import com.scada.gateway.model.entity.ControllerEntity;
 import com.scada.gateway.model.entity.TagEntity;
@@ -37,17 +39,20 @@ public class CommandService {
     private final TagCatalog tagCatalog;
     private final OpcUaClientRegistry opcUaClients;
     private final ModbusClientService modbus;
+    private final PacClientService pac;
     private final EventLogService eventLog;
     private final long opcuaOpTimeoutMs;
 
     public CommandService(TagCatalog tagCatalog,
                           OpcUaClientRegistry opcUaClients,
                           ModbusClientService modbus,
+                          PacClientService pac,
                           EventLogService eventLog,
                           @Value("${gateway.opcua-op-timeout-ms:5000}") long opcuaOpTimeoutMs) {
         this.tagCatalog = tagCatalog;
         this.opcUaClients = opcUaClients;
         this.modbus = modbus;
+        this.pac = pac;
         this.eventLog = eventLog;
         this.opcuaOpTimeoutMs = opcuaOpTimeoutMs;
     }
@@ -71,12 +76,15 @@ public class CommandService {
                     "Тег только для чтения (датчик), запись запрещена: " + tag.getName(), null);
         }
         // Маршрутизация по протоколу — деталь реализации шлюза, наружу не торчит (A6).
-        // Запись реализована для OPC UA и Modbus; иной протокол → PROTOCOL_UNSUPPORTED.
+        // Запись реализована для OPC UA, Modbus и PAC; иной протокол → PROTOCOL_UNSUPPORTED.
         if (TagProtocols.isOpcUaTag(tag)) {
             return writeOpcUa(tag, value, dataType);
         }
         if (TagProtocols.isModbusTag(tag)) {
             return writeModbus(tag, value, dataType);
+        }
+        if (TagProtocols.isPacTag(tag)) {
+            return writePac(tag, value, dataType);
         }
         String proto = tag.getProtocol() != null ? tag.getProtocol() : "неизвестный";
         return new CommandOutcome(false, CommandStatus.REJECTED_PROTOCOL_UNSUPPORTED,
@@ -188,6 +196,58 @@ public class CommandService {
 
         log.info("✍ Modbus записано {} = {} (addr {})", tag.getName(), value, addr);
         eventLog.logEvent("COMMAND_APPLIED", "ModbusClient", "INFO",
+                String.format("Записано %s = %s", tag.getName(), value),
+                Map.of("tagName", tag.getName(), "value", String.valueOf(value)));
+        return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
+    }
+
+    /**
+     * Запись команды актуатора по протоколу PAC (driver-master). Шлёт EXEC_DEVICE_COMMAND
+     * ({@code __<device>:set_cmd('<field>', 1, value)}) через УЖЕ открытое соединение
+     * опроса (как реальный драйвер — команда идёт по тому же каналу). Адрес устройства у
+     * PAC — это deviceName/fieldName (а не nodeId/регистр), поэтому они обязательны.
+     * boolean кодируется числом 1/0 (в протоколе значения — T_NUMBER).
+     */
+    private CommandOutcome writePac(TagEntity tag, Object value, String dataType) {
+        ControllerEntity ctrl = tag.getController();
+        if (ctrl == null || ctrl.getEndpoint() == null) {
+            return new CommandOutcome(false, CommandStatus.FAILED_NO_CONNECTION, "Контроллер не задан", null);
+        }
+        String device = tag.getDeviceName();
+        String field = tag.getFieldName();
+        if (device == null || field == null) {
+            return new CommandOutcome(false, CommandStatus.REJECTED_UNKNOWN_TAG,
+                    "У PAC-тега нет device/field для команды: " + tag.getName(), null);
+        }
+        String host = PacEndpoint.host(ctrl.getEndpoint());
+        int port = PacEndpoint.port(ctrl.getEndpoint(), 10000);
+        String dt = dataType != null ? dataType : tag.getDataType();
+
+        // Приведение типа — ОТДЕЛЬНО от записи (ошибка данных, а не связи).
+        Object typed;
+        try {
+            if ("BOOLEAN".equalsIgnoreCase(dt)) {
+                typed = ValueCodec.toBool(value);
+            } else if ("FLOAT".equalsIgnoreCase(dt)) {
+                typed = ValueCodec.toFloat(value);
+            } else if ("INT".equalsIgnoreCase(dt) || "INT16".equalsIgnoreCase(dt)) {
+                typed = ValueCodec.toInt(value);
+            } else {
+                typed = value;
+            }
+        } catch (NumberFormatException | ClassCastException e) {
+            return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
+                    "Значение не приводится к типу тега: " + e.getMessage(), null);
+        }
+
+        // write использует активное соединение опроса; false — нет связи/ошибка отсылки.
+        if (!pac.write(host, port, device, field, typed)) {
+            return new CommandOutcome(false, CommandStatus.FAILED_WRITE,
+                    "Команда PAC не выполнена (нет активного соединения или ошибка записи)", null);
+        }
+
+        log.info("✍ PAC записано {}.{} = {} (tag {})", device, field, typed, tag.getId());
+        eventLog.logEvent("COMMAND_APPLIED", "PacClient", "INFO",
                 String.format("Записано %s = %s", tag.getName(), value),
                 Map.of("tagName", tag.getName(), "value", String.valueOf(value)));
         return new CommandOutcome(true, CommandStatus.APPLIED, "Записано значение " + value, value);
