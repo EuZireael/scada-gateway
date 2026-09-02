@@ -2487,7 +2487,19 @@ plc:
     - {name: "2773", address: "2773", replay_source: 2A1D0000, type: float, protocol: modbus, modbus_address: 3719, modbus_type: float32, device: "OBJECT6", field: "RT_PAR_F[135]", dev_type: "Статистика_линии", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "2774", address: "2774", replay_source: 2A1D0001, type: float, protocol: modbus, modbus_address: 3721, modbus_type: float32, device: "OBJECT6", field: "RT_PAR_F[136]", dev_type: "Статистика_линии", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
 
+    # === PAC — ТРЕТИЙ ТИП КОНТРОЛЛЕРА (протокол driver-master, порт :10000) ===
+    # Демо-приборы (channelId 9001..9007 — вне реальных 2471). Значения синтетические
+    # (sine), ST — RW (пишет оператор). Обслуживаются PAC-сервером симулятора.
+    - {name: "9001", address: "9001", type: bool,  protocol: pac, device: "1V1",  field: "ST", dev_type: "V",  access: RW, initial: 0, noise_enabled: false, drift_enabled: false}
+    - {name: "9002", address: "9002", type: float, protocol: pac, device: "1V1",  field: "M",  dev_type: "V",  access: RO, initial: 20, generator: sine, generator_params: {amplitude: 5,  period: 30}, noise_enabled: false, drift_enabled: false}
+    - {name: "9003", address: "9003", type: bool,  protocol: pac, device: "1V2",  field: "ST", dev_type: "V",  access: RW, initial: 0, noise_enabled: false, drift_enabled: false}
+    - {name: "9004", address: "9004", type: float, protocol: pac, device: "1V2",  field: "M",  dev_type: "V",  access: RO, initial: 20, generator: sine, generator_params: {amplitude: 8,  period: 45}, noise_enabled: false, drift_enabled: false}
+    - {name: "9005", address: "9005", type: float, protocol: pac, device: "1LT1", field: "V",  dev_type: "LT", access: RO, initial: 50, min: 0, max: 100, generator: sine, generator_params: {amplitude: 20, period: 60}, noise_enabled: false, drift_enabled: false}
+    - {name: "9006", address: "9006", type: bool,  protocol: pac, device: "1M1",  field: "ST", dev_type: "M",  access: RW, initial: 0, noise_enabled: false, drift_enabled: false}
+    - {name: "9007", address: "9007", type: float, protocol: pac, device: "1M1",  field: "V",  dev_type: "M",  access: RO, initial: 1450, generator: sine, generator_params: {amplitude: 50, period: 20}, noise_enabled: false, drift_enabled: false}
+
 modbus_port: 5020
+pac_port: 10000
 replay:
   enabled: true
   data_path: data/archive_replay.pkl.gz

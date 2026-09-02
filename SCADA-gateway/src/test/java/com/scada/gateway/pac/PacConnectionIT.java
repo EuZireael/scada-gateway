@@ -41,4 +41,30 @@ class PacConnectionIT {
             conn.close();
         }
     }
+
+    @Test
+    void writeCommandApplies() throws Exception {
+        String host = System.getenv("PAC_IT_HOST");
+        int port = Integer.parseInt(System.getenv().getOrDefault("PAC_IT_PORT", "10000"));
+
+        PacConnection conn = new PacConnection(host, port, 3000);
+        try {
+            conn.connect();
+            conn.handshake();
+            conn.writeCommand("1V1", "ST", true);   // EXEC_DEVICE_COMMAND: __1V1:set_cmd('ST',1,1)
+
+            // Снимок состояний сим обновляет раз в update_rate (~0.5с), поэтому читаем
+            // с ретраями: команда применилась в теге, но в tags[] попадёт со след. циклом.
+            Object st = null;
+            for (int i = 0; i < 12 && !Boolean.TRUE.equals(st); i++) {
+                Thread.sleep(300);
+                conn.pollStates();
+                st = conn.readValue("9001", "BOOLEAN");
+            }
+            System.out.println("PAC IT write: 1V1.ST после записи = " + st);
+            assertEquals(Boolean.TRUE, st, "после записи ST должен стать true");
+        } finally {
+            conn.close();
+        }
+    }
 }
