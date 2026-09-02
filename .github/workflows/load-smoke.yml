@@ -1,0 +1,72 @@
+# ============================================================================
+# Нагрузочный ДЫМОВОЙ ГЕЙТ (сторож регрессий).
+#   ЗАЧЕМ: не «найти потолок» (раннер GitHub для бенчмарка не годится — 2–4 общих
+#   ядра, «шумный сосед», числа пляшут от прогона к прогону), а поймать РЕГРЕССИЮ
+#   пропускной способности: поднять весь стек, дать фиксированную умеренную
+#   нагрузку (профиль smoke) и упасть, если throughput ниже порога или стек не встал.
+#
+#   КОГДА: вручную (кнопка «Run workflow») и ночью по расписанию. На каждый PR НЕ
+#   вешаем — это ~20 мин и лишние минуты-раннера; для быстрого фидбэка есть ci.yml.
+#
+#   ПОРОГ: откалибруй по ПЕРВОМУ реальному прогону — посмотри «достигнуто» в сводке
+#   /CSV и поставь порог на ~25–30% ниже (запас на слабое железо раннера).
+# ============================================================================
+name: Load smoke (gate)
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_rate:
+        description: 'Порог throughput, msg/s (ниже — провал)'
+        default: '700'
+  schedule:
+    - cron: '0 3 * * *'   # ежедневно 03:00 UTC (расписание работает на default-ветке репо)
+
+# Один тяжёлый прогон за раз: параллельные запуски этого workflow ставятся в очередь.
+concurrency:
+  group: loadtest-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Smoke load gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      # Java нужна, чтобы собрать jar: Dockerfile шлюза копирует ГОТОВЫЙ target/*.jar
+      # (он не многоступенчатый) → сначала package, потом docker build внутри run.py.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build gateway jar
+        working-directory: SCADA-gateway
+        run: ./mvnw -B -DskipTests package
+
+      # Python гоняет оркестратор нагрузки (loadtest/run.py); из внешнего ему нужен
+      # только PyYAML (остальное — стандартная библиотека).
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install harness deps
+        run: pip install pyyaml
+
+      # --build   → пересобрать образы, чтобы свежий jar попал в образ шлюза.
+      # --min-rate → CI-гейт: exit≠0, если достигнутый rate ниже порога (input или 700).
+      - name: Run smoke load test (gate)
+        run: python3 loadtest/run.py smoke --build --min-rate ${{ github.event.inputs.min_rate || '700' }}
+
+      # Метрики забираем ВСЕГДА — и на успехе, и на провале гейта (CSV уже записан).
+      - name: Upload metrics CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-smoke-metrics
+          path: loadtest/metrics/*.csv
+          if-no-files-found: ignore
