@@ -76,6 +76,12 @@ jobs:
   docker:
     name: Build & publish image (GHCR)
     needs: gateway
+    # Только на КАНОНИЧЕСКОМ репозитории. На форке push в main-зеркало (синк после
+    # мёржа) публиковать в ghcr.io/<форк> нечего и незачем — без этого гарда job
+    # валится на docker push и сыплет уведомлениями «CI/CD failed for main».
+    # На pull_request github.repository = БАЗОВЫЙ репо (savushkin-dev) → job идёт
+    # (валидация сборки образа); на форк-пуше — пропускается целиком.
+    if: github.repository == 'savushkin-dev/scada-gateway'
     runs-on: ubuntu-latest
     permissions:
       contents: read
