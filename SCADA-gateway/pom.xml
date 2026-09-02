@@ -99,6 +99,15 @@
             <version>2.5.0</version>
         </dependency>
 
+        <!-- LuaJ: чистый Lua на Java. Ответы PAC (протокол driver-master) приходят
+             как Lua-скрипт — исполняем его в LuaJ и читаем таблицу tags, ровно как
+             это делает оригинальный C++-драйвер PAC. -->
+        <dependency>
+            <groupId>org.luaj</groupId>
+            <artifactId>luaj-jse</artifactId>
+            <version>3.0.1</version>
+        </dependency>
+
         <!-- OPC UA Client -->
         <dependency>
             <groupId>org.eclipse.milo</groupId>
