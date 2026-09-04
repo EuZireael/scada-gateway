@@ -16,6 +16,14 @@ updates:
     labels: ["dependencies", "java"]
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # Мажоры, требующие ручной миграции (не через бота):
+      # Spring Boot 4 = Spring 7 / Jakarta — крупная миграция.
+      - dependency-name: "org.springframework.boot:spring-boot-starter-parent"
+        versions: [">=4"]
+      # j2mod 3.x — несовместимый API Modbus-клиента шлюза.
+      - dependency-name: "com.ghgande:j2mod"
+        versions: [">=3"]
 
   # ---- Python: зависимости симулятора (requirements.txt) ----
   - package-ecosystem: "pip"
@@ -32,6 +40,9 @@ updates:
       # мажор 3.8+ мигрировать только вручную. См. requirements.txt.
       - dependency-name: "pymodbus"
         versions: [">=3.8"]
+      # asyncua 2.x — мажор OPC UA сервера/клиента, ломает симулятор (нужна миграция).
+      - dependency-name: "asyncua"
+        versions: [">=2"]
 
   # ---- GitHub Actions: версии экшенов в workflow ----
   - package-ecosystem: "github-actions"
@@ -50,6 +61,10 @@ updates:
     labels: ["dependencies", "docker"]
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # Рантайм-JDK держим на 21 LTS в лад со сборкой (java.version=21).
+      - dependency-name: "eclipse-temurin"
+        versions: [">=22"]
   - package-ecosystem: "docker"
     directory: "/plc-simulator"
     schedule:
@@ -57,3 +72,7 @@ updates:
     labels: ["dependencies", "docker"]
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # Python 3.12+ ломает asyncua (баг issubclass) — держим 3.11 (см. Dockerfile).
+      - dependency-name: "python"
+        versions: [">=3.12"]
