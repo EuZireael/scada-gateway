@@ -43,7 +43,7 @@ jobs:
       # какой тест упал, не заходя в раннер (доступно во вкладке Actions).
       - name: Upload test reports
         if: always()   # даже если сборка упала — отчёт всё равно нужен
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: surefire-reports
           path: SCADA-gateway/target/surefire-reports/
