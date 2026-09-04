@@ -26,6 +26,12 @@ updates:
     labels: ["dependencies", "python"]
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # pymodbus 3.8 переименовал датастор, а 3.15 полностью его переписал —
+      # ломает core/modbus_server.py. Держимся на 3.7.x (патчи разрешены),
+      # мажор 3.8+ мигрировать только вручную. См. requirements.txt.
+      - dependency-name: "pymodbus"
+        versions: [">=3.8"]
 
   # ---- GitHub Actions: версии экшенов в workflow ----
   - package-ecosystem: "github-actions"
