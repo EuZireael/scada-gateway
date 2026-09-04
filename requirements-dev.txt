@@ -1,0 +1,5 @@
+# Зависимости для тестов Python-части. Ставит рантайм-зависимости симулятора
+# (нужны для импорта core.tag / sim_records / gen_config) плюс сам pytest.
+#   pip install -r requirements-dev.txt
+-r plc-simulator/requirements.txt
+pytest>=8,<9
