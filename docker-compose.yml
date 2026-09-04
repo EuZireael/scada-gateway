@@ -41,6 +41,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 15
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 128M
     networks: [scada]
 
   # ------------------------------- Kafka -----------------------------------
@@ -71,6 +77,12 @@ services:
       interval: 10s
       timeout: 10s
       retries: 15
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+        reservations:
+          memory: 512M
     networks: [scada]
 
   # ----------------------------- Simulator ---------------------------------
@@ -87,7 +99,23 @@ services:
       - "4840:4840"
       - "5020:5020"
       - "10000:10000"                   # PAC (driver-master) — для отладки с хоста
+    # Liveness: процесс жив и серверы слушают. OPC UA (4840) биндится на
+    # advertised-хост (simulator), НЕ на loopback, поэтому в пробе проверяем
+    # Modbus (5020) и PAC (10000) на 127.0.0.1 — оба на 0.0.0.0 (если они
+    # слушают, поднят и весь симулятор — серверы стартуют вместе в plc.py).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;[socket.create_connection(('127.0.0.1',p),2).close() for p in (5020,10000)]"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 128M
     networks: [scada]
 
   # ------------------------------ Gateway ----------------------------------
@@ -109,8 +137,21 @@ services:
       kafka:
         condition: service_healthy
       simulator:
-        condition: service_started
+        condition: service_healthy
+    # UP, когда контекст поднялся и БД/Kafka доступны (Spring Boot actuator health).
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8888/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+        reservations:
+          memory: 512M
     networks: [scada]
 
 networks:
