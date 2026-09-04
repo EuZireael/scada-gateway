@@ -50,8 +50,8 @@ jobs:
           if-no-files-found: ignore
 
   # ------------------ Симулятор/стенд: проверка синтаксиса ------------------
-  # Полноценных pytest-тестов у Python-части пока нет (задел на будущее);
-  # минимальный гейт — что все .py хотя бы компилируются (нет опечаток/битого кода).
+  # Быстрый гейт: все .py компилируются (нет опечаток/битого кода). Логику
+  # проверяет отдельная джоба python-tests (pytest) ниже.
   python-syntax:
     name: Python syntax check
     runs-on: ubuntu-latest
@@ -68,6 +68,31 @@ jobs:
           find plc-simulator loadtest tools -name '*.py' -print0 \
             | xargs -0 python -m py_compile
           echo "OK: все .py компилируются"
+
+  # ------------------ Python-часть: юнит-тесты (pytest) --------------------
+  # Логика симулятора и генератора нагрузочных конфигов: упаковка Modbus-
+  # регистров (Tag.get_modbus_registers), формат значений ptusa (fmt_value),
+  # стыковка адресов gateway↔sim в gen_config. Тесты лежат в tests/.
+  python-tests:
+    name: Python tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'   # совпадает с образом симулятора (python:3.11-slim)
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      # requirements-dev.txt тянет рантайм-зависимости симулятора (нужны для
+      # импорта core.tag / sim_records / gen_config) плюс сам pytest.
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        run: pytest
 
   # ---------------- CD: сборка и публикация docker-образа шлюза -------------
   # «D» из CI/CD. На PR — только СОБИРАЕТ образ (проверка, что Dockerfile рабочий).
