@@ -7,7 +7,9 @@ daemon-потоке (StartTcpServer блокирующий). PLCSimulator на �
 """
 import logging
 import threading
-from pymodbus.server.sync import StartTcpServer
+# pymodbus 3.x: синхронный StartTcpServer переехал из pymodbus.server.sync в
+# pymodbus.server (сам сервер по-прежнему блокирующий — крутим его в daemon-потоке).
+from pymodbus.server import StartTcpServer
 from pymodbus.datastore import ModbusSlaveContext, ModbusServerContext
 from pymodbus.device import ModbusDeviceIdentification
 
@@ -42,11 +44,13 @@ class ModbusServer:
 
         self.running = True
 
-        # Запускаем сервер в отдельном потоке
+        # Запускаем сервер в отдельном потоке. В pymodbus 3.x StartTcpServer
+        # принимает только именованные аргументы (контекст — kwarg 'context',
+        # не позиционно, как было в 2.x).
         self._server_thread = threading.Thread(
             target=StartTcpServer,
-            args=(self.context,),
             kwargs={
+                'context': self.context,
                 'address': ("0.0.0.0", self.port),
                 'identity': identity
             },
