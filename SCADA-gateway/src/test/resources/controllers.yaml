@@ -1,0 +1,9 @@
+# Пустой конфиг контроллеров ДЛЯ ИНТЕГРАЦИОННОГО ТЕСТА (перекрывает боевой
+# controllers.yaml из src/main/resources на тестовом classpath).
+#
+# Зачем пустой: интеграционный тест поднимает контекст против реальных
+# Postgres+Kafka (Testcontainers), но НЕ должен коннектиться к OPC UA/Modbus/PAC.
+# 0 серверов → ConfigurationService создаёт 0 контроллеров → OpcUaClientServiceDB
+# @PostConstruct не делает ни одной попытки соединения (быстрый и детерминированный старт).
+opcua:
+  servers: []
