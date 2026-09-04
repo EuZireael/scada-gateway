@@ -65,7 +65,7 @@ jobs:
       # Метрики забираем ВСЕГДА — и на успехе, и на провале гейта (CSV уже записан).
       - name: Upload metrics CSV
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: loadtest-smoke-metrics
           path: loadtest/metrics/*.csv
