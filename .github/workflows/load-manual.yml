@@ -38,7 +38,7 @@ jobs:
 
       # jar собираем на хосте: Dockerfile шлюза копирует готовый target/*.jar.
       - name: Set up JDK 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
