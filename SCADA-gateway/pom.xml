@@ -25,7 +25,7 @@
 
     <properties>
         <java.version>21</java.version>
-        <milo.version>0.6.12</milo.version>
+        <milo.version>0.6.16</milo.version>
     </properties>
 
     <repositories>
