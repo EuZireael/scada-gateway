@@ -1,0 +1,53 @@
+# ============================================================================
+# Dependabot — автоматические PR на обновление зависимостей.
+#   Проверяет экосистемы проекта раз в неделю и открывает PR, которые проходят
+#   через тот же CI/CD (ci.yml), поэтому «красное» обновление не влить.
+# Замечание: Dependabot запускается на КАНОНИЧЕСКОМ репозитории (savushkin-dev)
+#   и только если включён в его настройках; на форке он неактивен.
+# ============================================================================
+version: 2
+updates:
+  # ---- Java: зависимости шлюза (pom.xml) ----
+  - package-ecosystem: "maven"
+    directory: "/SCADA-gateway"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "java"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ---- Python: зависимости симулятора (requirements.txt) ----
+  - package-ecosystem: "pip"
+    directory: "/plc-simulator"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ---- GitHub Actions: версии экшенов в workflow ----
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "chore(ci)"
+
+  # ---- Docker: базовые образы Dockerfile'ов ----
+  - package-ecosystem: "docker"
+    directory: "/SCADA-gateway"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "docker"]
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: "docker"
+    directory: "/plc-simulator"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "docker"]
+    commit-message:
+      prefix: "chore(deps)"
