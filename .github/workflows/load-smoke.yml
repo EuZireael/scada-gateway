@@ -51,7 +51,7 @@ jobs:
       # Python гоняет оркестратор нагрузки (loadtest/run.py); из внешнего ему нужен
       # только PyYAML (остальное — стандартная библиотека).
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - name: Install harness deps
