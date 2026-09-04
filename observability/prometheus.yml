@@ -1,0 +1,11 @@
+# Prometheus для наблюдаемости SCADA-шлюза.
+# Скрейпит метрики Micrometer с gateway:8888/actuator/prometheus
+# (scada_controllers_connected, scada_telemetry_sent_total, scada_commands_total{status}, jvm_*).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: scada-gateway
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['gateway:8888']

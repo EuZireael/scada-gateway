@@ -6,9 +6,18 @@
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 
+# curl — для HEALTHCHECK (опрос /actuator/health из docker-compose).
+# Непривилегированный пользователь scada — процесс шлюза НЕ должен бежать под root
+# (принцип наименьших привилегий; при пробое меньше поверхность атаки).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd -r scada && useradd -r -g scada -u 1001 scada
+
 # Готовый fat-jar из target/. Имя фиксировано финальным <finalName> из pom
 # (SCADA-gateway-0.0.1-SNAPSHOT.jar); берём любой *.jar, но НЕ *-sources/-javadoc.
-COPY target/SCADA-gateway-*.jar app.jar
+# --chown: jar принадлежит scada (читается непривилегированным процессом).
+COPY --chown=scada:scada target/SCADA-gateway-*.jar app.jar
 
 # HTTP/actuator шлюза
 EXPOSE 8888
@@ -24,4 +33,8 @@ EXPOSE 8888
 # Переопределяется без пересборки: docker run -e JAVA_OPTS="...".
 # sh -c + exec — чтобы java стала PID 1 и получала SIGTERM (чистый shutdown, @PreDestroy).
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -Xlog:gc*:stdout:time,uptime,level,tags"
+
+# Дальше бежим под непривилегированным пользователем (curl/health ему доступны,
+# запись в /app не нужна — jar только читается).
+USER scada
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]
