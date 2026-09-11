@@ -4,6 +4,8 @@ import org.luaj.vm2.Globals;
 import org.luaj.vm2.LuaValue;
 import org.luaj.vm2.lib.jse.JsePlatform;
 
+import com.scada.gateway.opcua.ValueCodec;
+
 /**
  * Работа с Lua-стейтом PAC. Ответы контроллера приходят как Lua-скрипт: driver-master
  * исполняет его и читает значения тегов как Lua-переменные. Здесь то же самое на LuaJ:
@@ -43,8 +45,8 @@ public final class PacLua {
         if (tags.isnil()) return null;
         LuaValue v = tags.get(LuaValue.valueOf(key));
         if (v.isnil()) return null;
-        if ("BOOLEAN".equalsIgnoreCase(dataType)) return v.toint() != 0;
-        if ("INT".equalsIgnoreCase(dataType) || "INTEGER".equalsIgnoreCase(dataType)) {
+        if (ValueCodec.isBool(dataType)) return v.toint() != 0;
+        if (ValueCodec.isInt(dataType)) {
             return (long) v.todouble();
         }
         return v.todouble();

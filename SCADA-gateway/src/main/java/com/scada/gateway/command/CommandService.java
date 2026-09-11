@@ -172,11 +172,11 @@ public class CommandService {
         String dt = dataType != null ? dataType : tag.getDataType();
 
         try {
-            if ("FLOAT".equalsIgnoreCase(dt)) {
+            if (ValueCodec.isFloat(dt)) {
                 modbus.writeFloat(host, port, addr, unitId, ValueCodec.toFloat(value));
-            } else if ("INT".equalsIgnoreCase(dt) || "INT16".equalsIgnoreCase(dt)) {
+            } else if (ValueCodec.isInt(dt)) {
                 modbus.writeRegister(host, port, addr, unitId, ValueCodec.toInt(value) & 0xFFFF);
-            } else if ("BOOLEAN".equalsIgnoreCase(dt)) {
+            } else if (ValueCodec.isBool(dt)) {
                 modbus.writeRegister(host, port, addr, unitId, ValueCodec.toBool(value) ? 1 : 0);
             } else {
                 return new CommandOutcome(false, CommandStatus.REJECTED_TYPE_MISMATCH,
@@ -226,11 +226,11 @@ public class CommandService {
         // Приведение типа — ОТДЕЛЬНО от записи (ошибка данных, а не связи).
         Object typed;
         try {
-            if ("BOOLEAN".equalsIgnoreCase(dt)) {
+            if (ValueCodec.isBool(dt)) {
                 typed = ValueCodec.toBool(value);
-            } else if ("FLOAT".equalsIgnoreCase(dt)) {
+            } else if (ValueCodec.isFloat(dt)) {
                 typed = ValueCodec.toFloat(value);
-            } else if ("INT".equalsIgnoreCase(dt) || "INT16".equalsIgnoreCase(dt)) {
+            } else if (ValueCodec.isInt(dt)) {
                 typed = ValueCodec.toInt(value);
             } else {
                 typed = value;
