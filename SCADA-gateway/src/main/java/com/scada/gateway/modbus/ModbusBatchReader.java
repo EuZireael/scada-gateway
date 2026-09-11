@@ -1,5 +1,6 @@
 package com.scada.gateway.modbus;
 
+import com.scada.gateway.opcua.ValueCodec;
 import com.scada.gateway.model.entity.TagEntity;
 import org.springframework.stereotype.Component;
 
@@ -72,13 +73,13 @@ public class ModbusBatchReader {
     }
 
     private static int width(TagEntity tag) {
-        return "FLOAT".equalsIgnoreCase(tag.getDataType()) ? 2 : 1;
+        return ValueCodec.isFloat(tag.getDataType()) ? 2 : 1;
     }
 
     /** Декод сырых регистров блока в значение тега (1-в-1 со старым пер-теговым путём). */
     private static Object decode(TagEntity tag, int[] regs, int off) {
         String dt = tag.getDataType();
-        if ("FLOAT".equalsIgnoreCase(dt)) {
+        if (ValueCodec.isFloat(dt)) {
             if (off < 0 || off + 1 >= regs.length) return null;
             int reg1 = regs[off], reg2 = regs[off + 1];
             int le = (reg2 << 16) | (reg1 & 0xFFFF);   // little-endian по словам (как в симуляторе)
@@ -86,7 +87,7 @@ public class ModbusBatchReader {
         }
         if (off < 0 || off >= regs.length) return null;
         int reg = regs[off];
-        if ("BOOLEAN".equalsIgnoreCase(dt)) {
+        if (ValueCodec.isBool(dt)) {
             return reg != 0;
         }
         return reg;   // INT / INT16 (0..65535)

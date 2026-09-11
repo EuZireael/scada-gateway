@@ -19,6 +19,30 @@ public final class ValueCodec {
         // Утилитный класс — не инстанцируем.
     }
 
+    /**
+     * Имя типа тега начинается с префикса? Сравнение ИМЕННО по префиксу, а не на
+     * равенство: в конфиге встречаются и {@code INT}, и {@code INT16}, и {@code INT32},
+     * и точное сравнение молча роняло целый тег в вещественную ветку.
+     */
+    private static boolean is(String dataType, String prefix) {
+        return dataType != null && dataType.trim().toUpperCase().startsWith(prefix);
+    }
+
+    /** Тег объявлен булевым. */
+    public static boolean isBool(String dataType) {
+        return is(dataType, "BOOL");
+    }
+
+    /** Тег объявлен целым: INT, INTEGER, INT16, INT32. */
+    public static boolean isInt(String dataType) {
+        return is(dataType, "INT");
+    }
+
+    /** Тег объявлен вещественным: FLOAT, REAL, DOUBLE. */
+    public static boolean isFloat(String dataType) {
+        return is(dataType, "FLOAT") || is(dataType, "REAL") || is(dataType, "DOUBLE");
+    }
+
     /** Значение команды → OPC UA {@link Variant} нужного типа (по имени типа тега). */
     public static Variant toVariant(String dataType, Object value) {
         String dt = dataType == null ? "" : dataType.trim().toUpperCase();

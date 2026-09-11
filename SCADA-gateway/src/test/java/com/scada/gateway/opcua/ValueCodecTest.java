@@ -138,4 +138,34 @@ class ValueCodecTest {
         assertInstanceOf(Integer.class, result);
         assertEquals(42, result);
     }
+
+    // --- Распознавание имени типа ------------------------------------------
+    // Регрессия: в конфиге есть INT, INT16 и INT32. Точное сравнение с "INT"
+    // молча роняло INT32 в вещественную ветку, и целый тег приезжал как 0.0.
+
+    @Test
+    void целымСчитаетсяЛюбойIntПрефикс() {
+        assertTrue(ValueCodec.isInt("INT"));
+        assertTrue(ValueCodec.isInt("int16"));
+        assertTrue(ValueCodec.isInt("INT32"));
+        assertTrue(ValueCodec.isInt("Integer"));
+        assertFalse(ValueCodec.isInt("FLOAT"));
+        assertFalse(ValueCodec.isInt(null));
+    }
+
+    @Test
+    void вещественнымСчитаетсяFloatRealDouble() {
+        assertTrue(ValueCodec.isFloat("FLOAT"));
+        assertTrue(ValueCodec.isFloat("real"));
+        assertTrue(ValueCodec.isFloat("DOUBLE"));
+        assertFalse(ValueCodec.isFloat("INT32"));
+        assertFalse(ValueCodec.isFloat("STRING"));
+    }
+
+    @Test
+    void булевымСчитаетсяBoolИBoolean() {
+        assertTrue(ValueCodec.isBool("BOOL"));
+        assertTrue(ValueCodec.isBool("boolean"));
+        assertFalse(ValueCodec.isBool("INT32"));
+    }
 }

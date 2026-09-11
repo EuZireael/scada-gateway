@@ -47,6 +47,9 @@ class Tag:
         # отличаться: несколько тегов могут проигрывать ОДНУ серию архива
         # (дублирование данных), сохраняя при этом свой уникальный address/nodeId.
         self.replay_source = config.get('replay_source', self.address)
+        # Сдвиг точки воспроизведения внутри архива, секунды. Разводит каналы,
+        # сидящие на одной серии, чтобы они не менялись синхронно.
+        self.replay_offset = float(config.get('replay_offset', 0) or 0)
         # Объектная модель прибора (как настоящий ПЛК): устройство + поле.
         # OPC UA-узлы группируются в object-node на прибор с переменными-полями.
         self.device = config.get('device')       # напр. "LINE1V0"
@@ -69,6 +72,10 @@ class Tag:
         # Modbus поля
         self.modbus_address = config.get('modbus_address')
         self.modbus_type = config.get('modbus_type', 'float32')
+        # Архив числовой, а часть каналов по базе — строковые (списки рецептов и
+        # программ, ответ на команду). Шаблон превращает число из архива в метку
+        # вида "REC-07", чтобы строковый тег тоже жил, а не стоял пустым.
+        self.replay_format = config.get('replay_format')
         
         # Инициализация значения
         initial_value = config.get('initial', 0)
@@ -250,7 +257,10 @@ class Tag:
         """Установить значение из архива (replay), минуя проверку доступа RW."""
         if raw_value is None:
             return
-        self._value = self._convert_initial(raw_value)
+        if self.replay_format:
+            self._value = self.replay_format % int(raw_value)
+        else:
+            self._value = self._convert_initial(raw_value)
         self.timestamp = time.time()
 
     def update_simulation(self, dt: float = 1.0):
