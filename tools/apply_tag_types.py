@@ -13,10 +13,10 @@
    `_N` (`V_ST_N` покрывает `V_ST_1`, `V_ST_2`, …), а поле — с индексом-звёздочкой
    (`RT_PAR_F[*]` покрывает `RT_PAR_F[11]`).
 
-2. **Пишем только по OPC UA.** Тег, в который оператор осмысленно пишет
-   (состояние прибора, ручной режим, команда, любая уставка), живёт на OPC UA и
-   помечен `writable`. Тег, который прибор измеряет или контроллер считает сам,
-   писать некуда — он уезжает на Modbus и остаётся только на чтение.
+2. **Пишется каждый канал.** На этапе интеграции монитор наполняет значениями всё
+   дерево тегов, поэтому `writable` стоит везде. Разделение полей на «оператор
+   задаёт» и «прибор измеряет» осталось, но оно теперь определяет только то, за
+   каким контроллером закреплён канал, а не право записи.
 
 3. **Modbus держит около десяти процентов каналов.** Приоритет у OPC UA:
    там и обратное чтение записи, и целые, и строки. На Modbus остаётся слой
@@ -24,20 +24,13 @@
    (регистр шестнадцатибитный, кодировки строк нет ни в симуляторе, ни в шлюзе),
    поэтому строки всегда остаются на OPC UA, даже если писать в них нечего.
 
-Данные идут по ВСЕМ трём протоколам: контроллер, который ничего не передаёт, —
-это не контроллер. Каждому каналу назначается серия пятисуточного архива по
-смыслу поля: дискретная для состояний и режимов, аналоговая для измеряемых
-величин, целочисленная для кодов и счётчиков. Серии с отрицательными значениями
-не берутся вообще — именно они когда-то дали минус на расходе и уровне.
-
-Одна серия достаётся многим каналам, поэтому каждому проставляется свой
-`replay_offset` — сдвиг точки воспроизведения внутри архива. Без него группа
-каналов меняется синхронно и сразу читается как подделка.
-
-Архив числовой, а часть каналов по базе строковые, поэтому им дополнительно
-проставляется `replay_format`: число из архива превращается в метку вида
-"REC-07". Запись оператора по-прежнему перебивает реплей через латч в
-`core/plc.py`: тег ведётся архивом до первой команды, дальше держит ручное.
+ЭТАП ИНТЕГРАЦИИ: генерации значений нет. Каждый канал стоит на нуле своего типа
+(`0`, `0.0` или пустая строка), монитор записывает в него нужное значение, и
+записанное возвращается обратно в телеметрию. Поэтому писать можно в ЛЮБОЙ
+канал, включая Modbus: обратное чтение регистров реализовано в
+`core/plc.py` и `core/modbus_server.py`. Движок воспроизведения архива выключен
+(`replay.enabled: false`); когда понадобятся живые данные, он включается обратно
+вместе с назначением серий.
 
 Карта Modbus-регистров перекладывается с нуля, подряд от 40001: `FLOAT` занимает
 два регистра (`float32`), `INT32` — один (`int16`). Так карта остаётся плотной и
@@ -90,6 +83,9 @@ def on_pac(group, device):
     return (device or "").startswith(PAC_DEVICE_PREFIX)
 
 SIM_TYPE = {"INT32": "int", "FLOAT": "float", "STRING": "string"}
+
+# Ноль своего типа: с него начинает каждый канал, пока монитор не запишет своё.
+ZERO = {"INT32": "0", "FLOAT": "0.0", "STRING": '""'}
 
 ARCHIVE = ROOT / "plc-simulator/data/archive_replay.pkl.gz"
 
@@ -161,17 +157,14 @@ def quote(value):
 def sim_line(tag):
     """Строка тега в конфиге симулятора, компактным потоковым отображением."""
     parts = [f'name: {quote(tag["address"])}', f'address: {quote(tag["address"])}',
-             f'replay_source: {tag["replay_source"]}',
              f'type: {tag["type"]}', f'protocol: {tag["protocol"]}']
     if tag["protocol"] == "modbus":
         parts += [f'modbus_address: {tag["modbus_address"]}',
                   f'modbus_type: {tag["modbus_type"]}']
     parts += [f'device: {quote(tag["device"])}', f'field: {quote(tag["field"])}',
               f'dev_type: {quote(tag["dev_type"])}', f'access: {tag["access"]}',
-              "generator: replay", f'replay_offset: {tag["replay_offset"]}']
-    if tag.get("replay_format"):
-        parts.append(f'replay_format: {quote(tag["replay_format"])}')
-    parts += ["noise_enabled: false", "drift_enabled: false"]
+              f'initial: {tag["initial"]}',
+              "noise_enabled: false", "drift_enabled: false"]
     return "    - {" + ", ".join(parts) + "}\n"
 
 
@@ -228,9 +221,9 @@ SIM_HEADER = """# Симулятор = ТРИ КОНТРОЛЛЕРА с родн
 #   WAGO / Modbus TCP — каналов {mod}: поля = регистры (INT32 → int16, FLOAT → float32, 2 рег.)
 #   PAC Savushkin     — каналов {pac}: приборы первой линии, протокол driver-master
 # Типы полей заданы справочником docs/BN1_MCA1-типы-тегов.csv; раскладку делает
-# tools/apply_tag_types.py. Писать можно только по OPC UA: Modbus здесь на чтение.
-# Значения и тайминг — из пятисуточного архива BN1_MCA1, у каждого канала свой
-# сдвиг внутри записи. Запись оператора перебивает архив (латч в core/plc.py).
+# tools/apply_tag_types.py. Писать можно в любой канал, включая Modbus.
+# Генерации нет: каждый канал стоит на нуле своего типа, значение задаёт запись
+# монитора и она же возвращается в телеметрию. Писать можно в любой канал.
 # channelId = node.id из базы каналов.
 """
 
@@ -238,7 +231,7 @@ CTL_HEADER = """# Три контроллера: Phoenix (OPC UA, каналов
 # и PAC Savushkin (каналов {pac}, приборы первой линии). Целый прибор на один контроллер; tagId = channelId = node.id;
 # device/field/type уезжают в Kafka как метаданные, монитор собирает из них прибор.
 # Типы полей заданы справочником docs/BN1_MCA1-типы-тегов.csv, раскладку делает
-# tools/apply_tag_types.py. Запись разрешена только по OPC UA.
+# tools/apply_tag_types.py. Запись разрешена в любой канал.
 """
 
 
@@ -297,9 +290,11 @@ def main():
             protocol = "modbus"
         else:
             protocol = "opcua"
+        # Этап интеграции: генерации нет, все каналы стоят на нуле своего типа,
+        # и монитор записывает в них нужное значение. Поэтому писать можно ВЕЗДЕ,
+        # включая Modbus — обратное чтение регистров реализовано в симуляторе.
         plan.append({
-            "tag": t, "type": declared, "protocol": protocol,
-            "writable": not read_only,
+            "tag": t, "type": declared, "protocol": protocol, "writable": True,
         })
 
     # --- Карта Modbus-регистров заново, подряд -------------------------------
@@ -310,39 +305,6 @@ def main():
         item["modbus_register"] = register
         item["modbus_type"] = "float32" if item["type"] == "FLOAT" else "int16"
         register += 2 if item["type"] == "FLOAT" else 1
-
-    # --- Источник данных: каждому каналу серия архива по смыслу поля ---------
-    pools, duration = series_pools()
-    cursors = {}
-
-    def take(name, pool):
-        idx = cursors.get(name, 0)
-        cursors[name] = idx + 1
-        return pool[idx % len(pool)]
-
-    for item in plan:
-        field, declared = item["tag"]["fieldName"], item["type"]
-        if declared == "STRING":
-            pool = "small"
-        elif declared == "FLOAT":
-            pool = "analog"
-        elif field in BINARY_FIELDS:
-            pool = "discrete"
-        else:
-            pool = "counter" if pools["counter"] else "small"
-        item["pool"] = pool
-        item["replay_source"] = take(pool, pools[pool])
-        if declared == "STRING":
-            item["replay_format"] = STRING_FORMATS.get(field, "%d")
-    # Каналы, сидящие на одной серии, разводим по времени: иначе вся группа
-    # меняется синхронно и на мнемосхеме это читается как подделка.
-    groups = {}
-    for item in plan:
-        groups.setdefault(item["replay_source"], []).append(item)
-    for members in groups.values():
-        step = duration / len(members)
-        for n, item in enumerate(members):
-            item["replay_offset"] = round(n * step, 1)
 
     opc_items = [i for i in plan if i["protocol"] == "opcua"]
     mod_items = [i for i in plan if i["protocol"] == "modbus"]
@@ -391,9 +353,7 @@ def main():
                "protocol": item["protocol"], "device": src["device"],
                "field": src["field"], "dev_type": src["dev_type"],
                "access": "RW" if item["writable"] else "RO",
-               "replay_source": item["replay_source"],
-               "replay_offset": item["replay_offset"],
-               "replay_format": item.get("replay_format")}
+               "initial": ZERO[item["type"]]}
         if item["protocol"] == "modbus":
             out.update(modbus_address=item["modbus_register"],
                        modbus_type=item["modbus_type"])
@@ -406,16 +366,16 @@ def main():
     runs = tag_groups(sim_lines, "- {name:", lambda line, current: "station")
     blocks = [[sim_line(sim_tag(i)) for i in plan]]
     sim_lines = splice(sim_lines, runs, blocks)
-    # Данные идут по всем трём протоколам, значит движок реплея включён.
-    sim_lines = [l.replace("  enabled: false", "  enabled: true")
-                 if l.startswith("  enabled: false") else l for l in sim_lines]
+    # Генерации нет: значения задаёт только монитор своей записью.
+    sim_lines = [l.replace("  enabled: true", "  enabled: false")
+                 if l.startswith("  enabled: true") else l for l in sim_lines]
     SIM.write_text("".join(rewrite_headers(sim_lines, SIM_HEADER, len(opc_items),
                                            len(mod_items), len(pac_items))), encoding="utf-8")
 
     print(f"станционных тегов: {len(plan)}")
     print(f"  OPC UA: {len(opc_items)} ({len(opc_items)/len(plan)*100:.1f}%), "
           f"из них с записью {sum(1 for i in opc_items if i['writable'])}")
-    print(f"  Modbus: {len(mod_items)} ({len(mod_items)/len(plan)*100:.1f}%), только чтение")
+    print(f"  Modbus: {len(mod_items)} ({len(mod_items)/len(plan)*100:.1f}%)")
     print(f"  регистров занято: {register} (40001..{MODBUS_BASE + register - 1})")
     types = {}
     for i in plan:

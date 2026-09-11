@@ -12,6 +12,7 @@ from asyncua import Server, ua
 import asyncio
 import logging
 import math
+import struct
 import os
 from pathlib import Path
 from .data_block import DataBlock
@@ -80,6 +81,8 @@ class PLCSimulator:
         
         # Словарь для хранения последних значений Modbus
         self.modbus_values = {}
+        # Что мы сами положили в регистры: база для обратного чтения.
+        self._modbus_pushed = {}
         
         # Счетчики для диагностики
         self.read_count = 0
@@ -268,6 +271,47 @@ class PLCSimulator:
         except Exception as e:
             logger.error(f"Failed to start Modbus server: {e}")
     
+    @staticmethod
+    def _modbus_encode(value, modbus_type):
+        """Значение тега -> список регистров (как его увидит датастор)."""
+        if modbus_type == "float32":
+            packed = struct.pack("<f", float(value))
+            return [int.from_bytes(packed[0:2], "little"), int.from_bytes(packed[2:4], "little")]
+        if modbus_type == "int32":
+            raw = int(value) & 0xFFFFFFFF
+            return [raw & 0xFFFF, (raw >> 16) & 0xFFFF]
+        if modbus_type == "bool":
+            return [1 if value else 0]
+        return [int(value) & 0xFFFF]
+
+    @staticmethod
+    def _modbus_decode(regs, modbus_type):
+        """Регистры -> значение тега. int16 разворачиваем СО ЗНАКОМ, иначе запись
+        отрицательного кода вернулась бы оператору как 65531."""
+        if modbus_type == "float32":
+            raw = regs[0].to_bytes(2, "little") + regs[1].to_bytes(2, "little")
+            return struct.unpack("<f", raw)[0]
+        if modbus_type == "int32":
+            raw = regs[0] | (regs[1] << 16)
+            return raw - 0x100000000 if raw >= 0x80000000 else raw
+        if modbus_type == "bool":
+            return bool(regs[0])
+        raw = regs[0]
+        return raw - 0x10000 if raw >= 0x8000 else raw
+
+    def _modbus_operator_write(self, tag, address, modbus_type):
+        """Значение, записанное шлюзом в регистр, или None если запись не приходила."""
+        count = 2 if modbus_type in ("float32", "int32") else 1
+        regs = self.modbus_server.read_registers(address, count)
+        if not regs or len(regs) < count:
+            return None
+        if regs == self._modbus_pushed.get(address):
+            return None                      # в регистре ровно то, что положили мы
+        try:
+            return self._modbus_decode(regs, modbus_type)
+        except Exception:
+            return None
+
     async def update_modbus_tags(self):
         """Обновление Modbus регистров"""
         if not self.modbus_server or not self.modbus_server.running:
@@ -291,19 +335,30 @@ class PLCSimulator:
                 
                 if is_modbus and modbus_address is not None:
                     try:
+                        # Сначала обратное чтение: шлюз пишет команду прямо в датастор
+                        # сервера, и без этой проверки мы затёрли бы её своим значением.
+                        # Для OPC UA то же самое делает ветка RW в update_loop.
+                        written = self._modbus_operator_write(tag, modbus_address, modbus_type)
+                        if written is not None:
+                            tag.value = written
+                            tag._operator_override = True
+
                         value = tag.value
                         if value is None:
                             continue
-                        
+
                         # Конвертируем значение в правильный тип
                         if modbus_type == "float32":
                             self.modbus_server.update_register(modbus_address, value, "float32")
+                        elif modbus_type == "int32":
+                            self.modbus_server.update_register(modbus_address, int(value), "int32")
                         elif modbus_type == "int16":
                             self.modbus_server.update_register(modbus_address, int(value), "int16")
                         elif modbus_type == "uint16":
                             self.modbus_server.update_register(modbus_address, int(value), "uint16")
                         elif modbus_type == "bool":
                             self.modbus_server.update_register(modbus_address, 1 if value else 0, "bool")
+                        self._modbus_pushed[modbus_address] = self._modbus_encode(value, modbus_type)
                         
                         # Сохраняем значение для диагностики
                         self.modbus_values[modbus_address] = {
