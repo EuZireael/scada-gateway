@@ -84,13 +84,16 @@ class SimulatorApplication:
         
         self.running = True
         
-        # Устанавливаем обработчики сигналов
+        # Устанавливаем обработчики сигналов. add_signal_handler — Unix-only API
+        # event loop'а (NotImplementedError на Windows); там Ctrl+C и так штатно
+        # поднимает KeyboardInterrupt, отдельный обработчик не нужен.
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(
-                sig,
-                lambda s=sig: self.handle_signal(s)
-            )
+        if sys.platform != "win32":
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(
+                    sig,
+                    lambda s=sig: self.handle_signal(s)
+                )
         
         try:
             # Запускаем PLC в отдельной задаче
