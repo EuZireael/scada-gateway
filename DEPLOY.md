@@ -36,8 +36,8 @@ docker compose ps          # postgres должен быть (healthy)
 полная очистка — `docker compose down -v`).
 
 Совпадает с `application.yaml`: `jdbc:postgresql://localhost:5433/scada_db`,
-`bootstrap-servers: localhost:9092`. Таблицы создаёт сам Hibernate
-(`ddl-auto: update`), топики Kafka — брокер при первом сообщении.
+`bootstrap-servers: localhost:9092`. Схему создаёт Flyway (миграции `db/migration`,
+`ddl-auto: validate` только сверяет), топики Kafka — брокер при первом сообщении.
 
 ---
 
@@ -121,7 +121,7 @@ docker exec -it scada-postgres psql -U scada_user -d scada_db \
 
 # сообщения в Kafka
 docker exec -it kafka kafka-console-consumer \
-  --bootstrap-server localhost:9092 --topic scada-telemetry --max-messages 5
+  --bootstrap-server localhost:9092 --topic scada.tags --max-messages 5
 ```
 
 ---

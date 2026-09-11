@@ -24,7 +24,7 @@ import java.util.Map;
 @Configuration
 public class KafkaConfig {
 
-    @Value("${kafka.topics.telemetry:scada-telemetry}")
+    @Value("${kafka.topics.telemetry:scada.tags}")
     private String telemetryTopic;
 
     @Value("${kafka.topics.alarms:scada-alarms}")

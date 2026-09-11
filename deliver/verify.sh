@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Смоук-тест продюсер-стороны: ждёт готовности стека, дожидается сообщений в
-# топике scada-telemetry и печатает примеры. Запускать ПОСЛЕ `docker compose up -d`.
+# топике scada.tags и печатает примеры. Запускать ПОСЛЕ `docker compose up -d`.
 #   ./verify.sh
 set -uo pipefail
 cd "$(dirname "$0")"
 
-TOPIC=scada-telemetry
+TOPIC=scada.tags
 KAFKA=scada-kafka
 KIMG=confluentinc/cp-kafka:latest
 
@@ -55,13 +55,16 @@ $ENGINE exec "$KAFKA" kafka-console-consumer \
   --property print.key=true --property key.separator=' ║ ' 2>/dev/null
 echo "──────────────────────────────────────────────────────────────────────"
 
-# --- 4. разбивка по контроллерам (дискретные/аналоговые) ---
+# --- 4. разбивка по типу значения (тонкий триплет: controllerId/типа в теле НЕТ) ---
+# С key.separator ключ идёт перед value → PAC-теги узнаём по префиксу ключа PAC_DEMO.
 sample=$($ENGINE exec "$KAFKA" kafka-console-consumer \
   --bootstrap-server localhost:9092 --topic "$TOPIC" \
-  --max-messages 200 --timeout-ms 12000 2>/dev/null)
+  --max-messages 400 --timeout-ms 12000 \
+  --property print.key=true --property key.separator=' ║ ' 2>/dev/null)
 disc=$(printf '%s' "$sample" | grep -cE '"value":(true|false)')
-anal=$(printf '%s' "$sample" | grep -cE '"controllerId":2')
-echo "В выборке из 200: дискретных (OPC UA) ≈ $disc, аналоговых (Modbus) ≈ $anal"
+anal=$(printf '%s' "$sample" | grep -cE '"value":-?[0-9]')
+pac=$(printf '%s' "$sample" | grep -cE '^PAC_DEMO\.')
+echo "В выборке из 400: дискретных (bool) ≈ $disc, аналоговых (число) ≈ $anal, из них PAC-тегов ≈ $pac"
 
 # --- 5. адрес для монитора: localhost:9094 с хоста ---
 echo
@@ -76,4 +79,4 @@ else
 fi
 
 echo
-echo "✅ Проверка пройдена: телеметрия идёт в топик $TOPIC (tagId = node.id)."
+echo "✅ Проверка пройдена: телеметрия идёт в топик $TOPIC (идентичность = Kafka-key, путь канала)."

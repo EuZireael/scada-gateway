@@ -4,16 +4,16 @@
 #   ./up.sh                       # соберёт jar шлюза (если надо) и поднимет всё
 #   docker compose up -d --build  # если jar уже собран (target/*.jar)
 #
-#   postgres  — БД шлюза (scada_db); Hibernate ddl-auto=update создаёт схему сам
+#   postgres  — БД шлюза (scada_db); схема под Flyway (db/migration), ddl-auto=validate
 #   kafka     — брокер (KRaft, одна нода); топики авто-создаются при первой записи
-#   simulator — PLC-эмулятор: OPC UA (:4840) + Modbus TCP (:5020), replay архива
-#   gateway   — Spring Boot: опрашивает симулятор по 2 протоколам → Kafka
+#   simulator — PLC-эмулятор: OPC UA (:4840) + Modbus TCP (:5020) + PAC (:10000), replay архива
+#   gateway   — Spring Boot: опрашивает симулятор по 3 протоколам → Kafka
 #
 # Порты на хост:
 #   8888  — HTTP/actuator шлюза
 #   9094  — Kafka для монитора/хоста (bootstrap localhost:9094)
 #   5433  — PostgreSQL
-#   4840/5020 — OPC UA / Modbus симулятора (для отладки)
+#   4840/5020/10000 — OPC UA / Modbus / PAC симулятора (для отладки)
 #
 #   docker compose logs -f gateway     # логи шлюза
 #   docker compose down                # стоп (данные БД сохранятся в volume)
@@ -41,6 +41,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 15
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 128M
     networks: [scada]
 
   # ------------------------------- Kafka -----------------------------------
@@ -71,6 +77,12 @@ services:
       interval: 10s
       timeout: 10s
       retries: 15
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+        reservations:
+          memory: 512M
     networks: [scada]
 
   # ----------------------------- Simulator ---------------------------------
@@ -79,13 +91,31 @@ services:
     container_name: scada-simulator
     environment:
       # Сервер анонсирует резолвимое в сети имя (иначе Milo после discovery
-      # не переподключится). plc.py читает OPCUA_ENDPOINT/MODBUS_PORT из env.
+      # не переподключится). plc.py читает OPCUA_ENDPOINT/MODBUS_PORT/PAC_PORT из env.
       OPCUA_ENDPOINT: "opc.tcp://simulator:4840"
       MODBUS_PORT: "5020"
+      PAC_PORT: "10000"                 # третий протокол — PAC (driver-master)
     ports:
       - "4840:4840"
       - "5020:5020"
+      - "10000:10000"                   # PAC (driver-master) — для отладки с хоста
+    # Liveness: процесс жив и серверы слушают. OPC UA (4840) биндится на
+    # advertised-хост (simulator), НЕ на loopback, поэтому в пробе проверяем
+    # Modbus (5020) и PAC (10000) на 127.0.0.1 — оба на 0.0.0.0 (если они
+    # слушают, поднят и весь симулятор — серверы стартуют вместе в plc.py).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;[socket.create_connection(('127.0.0.1',p),2).close() for p in (5020,10000)]"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 128M
     networks: [scada]
 
   # ------------------------------ Gateway ----------------------------------
@@ -107,8 +137,21 @@ services:
       kafka:
         condition: service_healthy
       simulator:
-        condition: service_started
+        condition: service_healthy
+    # UP, когда контекст поднялся и БД/Kafka доступны (Spring Boot actuator health).
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8888/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+        reservations:
+          memory: 512M
     networks: [scada]
 
 networks:

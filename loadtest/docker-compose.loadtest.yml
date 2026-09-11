@@ -16,6 +16,18 @@ services:
   # не сможет прочитать смонтированный файл и шлюз молча возьмёт встроенные 2471 тега.
   simulator:
     command: ["python", "simulator.py", "config/loadtest.yaml"]
+    # Нагрузочный конфиг — firehose (OPC+Modbus), БЕЗ PAC-тегов, поэтому PAC-сервер
+    # (порт 10000) не поднимается. Базовый healthcheck (docker-compose.yml) проверяет
+    # 5020 И 10000 → на нагрузочном стенде сим был бы вечно unhealthy, gateway
+    # (depends_on service_healthy) не стартовал бы, и smoke-гейт падал бы с «нет
+    # данных о throughput» (так и было каждую ночь после #5). Здесь проверяем только
+    # Modbus 5020 — достаточный признак, что сим жив и отдаёт данные.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1',5020),2).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     volumes:
       - ./loadtest/generated/sim.yaml:/app/config/loadtest.yaml:ro,Z
 

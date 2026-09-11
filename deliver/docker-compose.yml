@@ -3,9 +3,9 @@
 # Все 4 образа грузятся из tar (см. load-images.sh) → ничего не тянется из сети
 # (pull_policy: never на каждом сервисе).
 #
-# Шлюз опрашивает симулятор (реплей архива BN1_MCA1 по OPC UA и Modbus) и
-# публикует телеметрию в Kafka (топик scada-telemetry): key = путь канала,
-# tagId = channel.node.id.
+# Шлюз опрашивает симулятор (реплей архива BN1_MCA1 по OPC UA, Modbus и PAC) и
+# публикует телеметрию в Kafka (топик scada.tags): key = путь канала
+# (channel.node.id_node), тело — тонкий триплет {value, quality, timestamp}.
 #
 # Запуск:   ./load-images.sh  &&  docker compose up -d
 # Смотреть: docker compose logs -f gateway
@@ -59,20 +59,22 @@ services:
     networks: [scada]
 
   simulator:
-    image: localhost/scada-simulator:1.0
+    image: localhost/scada-simulator:0.1.0
     pull_policy: never
     container_name: scada-simulator
     environment:
       OPCUA_ENDPOINT: "opc.tcp://simulator:4840"   # анонсирует резолвимое имя
       MODBUS_PORT: "5020"
+      PAC_PORT: "10000"                            # третий протокол — PAC (driver-master)
     ports:
       - "4840:4840"          # опционально: OPC UA с хоста
       - "5020:5020"          # опционально: Modbus с хоста
+      - "10000:10000"        # опционально: PAC (driver-master) с хоста
     restart: unless-stopped
     networks: [scada]
 
   gateway:
-    image: localhost/scada-gateway:1.0
+    image: localhost/scada-gateway:0.1.0
     pull_policy: never
     container_name: scada-gateway
     environment:

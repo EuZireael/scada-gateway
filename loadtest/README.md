@@ -6,7 +6,7 @@ Config-driven harness: выбираешь профиль → он генерит
 ## Что тестируется
 
 ```
-симулятор (OPC UA + Modbus)  →  ШЛЮЗ  →  Kafka (scada-telemetry)
+симулятор (OPC UA + Modbus)  →  ШЛЮЗ  →  Kafka (scada.tags)
 ```
 
 Монитора в этом стеке **нет** — меряем сторону производства (шлюз + Kafka):

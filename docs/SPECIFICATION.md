@@ -1,13 +1,13 @@
 # SCADA Gateway — спецификация
 
-> Промышленный шлюз сбора данных: опрашивает контроллеры ПЛК по **OPC UA** и **Modbus TCP**,
-> привязывает сигналы к общей **базе каналов** и публикует телеметрию, события и алармы в **Apache Kafka**
-> для монитора, редактора и мобильного приложения.
+> Промышленный шлюз сбора данных: опрашивает контроллеры ПЛК по **OPC UA**, **Modbus TCP**
+> и **PAC** (driver-master), привязывает сигналы к общей **базе каналов** и публикует телеметрию,
+> события и алармы в **Apache Kafka** для монитора, редактора и мобильного приложения.
 
 | | |
 |---|---|
-| **Технологии** | Spring Boot 3.2.4 · Java 21 · Eclipse Milo (OPC UA) · j2mod (Modbus) · Spring Kafka · PostgreSQL 16 |
-| **Протоколы поля** | OPC UA (типизированные узлы), Modbus TCP (holding-регистры, float32 LE / int16) |
+| **Технологии** | Spring Boot 3.5.16 · Java 21 · Eclipse Milo (OPC UA) · j2mod (Modbus) · LuaJ (PAC) · Spring Kafka · PostgreSQL 16 |
+| **Протоколы поля** | OPC UA (типизированные узлы), Modbus TCP (holding-регистры, float32 LE / int16), PAC (driver-master, Savushkin/ptusa: TCP + zlib(Lua), опрос через LuaJ) |
 | **Шина** | Apache Kafka (KRaft), JSON-сообщения |
 | **База каналов** | `channel_dump.sql` — PostgreSQL EAV, идентичность канала = `node.id` |
 | **Стенд** | PLC-симулятор (Python) проигрывает 5-суточный архив `BN1_MCA1` в реальном времени |
@@ -38,11 +38,12 @@
 **SCADA Gateway** — средний слой АСУ ТП между полевым уровнем (контроллеры ПЛК) и верхним
 уровнем (SCADA HMI: монитор, редактор, мобильное приложение). Задачи шлюза:
 
-- **Сбор** — циклический опрос контроллеров по двум промышленным протоколам одновременно.
+- **Сбор** — циклический опрос контроллеров по трём промышленным протоколам одновременно.
 - **Нормализация** — приведение сырых значений (типизированные OPC UA-узлы, Modbus-регистры)
   к единому виду и привязка к каналу общей базы по `node.id`.
-- **Обогащение** — восстановление объектной модели прибора (`metadata{device, field, deviceType}`),
-  чтобы монитор собрал разрозненные каналы обратно в объект-устройство.
+- **Единая идентичность** — привязка каждого сигнала к сквозному `node.id` (= Kafka-key),
+  по которому монитор собирает разрозненные каналы обратно в объект-устройство. Объектную
+  модель (device/field/type) монитор берёт из СВОЕГО реестра по ключу — на проводе её нет.
 - **Диагностика** — авто-переподключение, журнал событий, edge-триггерные алармы по уставкам.
 - **Публикация** — телеметрия/события/алармы в Kafka; приём команд записи от оператора.
 
@@ -68,7 +69,7 @@ flowchart LR
     G1 --> G2 --> G3
   end
 
-  KAFKA{{"Apache Kafka<br/>scada-telemetry / -alarms / -events / -commands"}}
+  KAFKA{{"Apache Kafka<br/>scada.tags / scada-alarms / scada-events / scada-commands"}}
   CHDB[("База каналов<br/>channel_dump.sql")]
 
   subgraph TOP["Верхний уровень (HMI)"]
@@ -136,10 +137,11 @@ flowchart TB
 | Конфигурация | `ConfigurationService` | Читает `application.yaml`, делает upsert контроллеров и 2471 тега в БД (ключ — `nodeId`), удаляет устаревшие. |
 | OPC UA клиент | `OpcUaClientServiceDB` | Опрос по потоку на контроллер, чтение типизированных узлов, оценка связи по циклу, супервизор reconnect. |
 | Modbus клиент | `ModbusClientService` | Чтение holding-регистров (`float32` little-endian, `int16`), пул соединений с backoff. |
+| PAC клиент | `PacClientService` | Опрос PAC-контроллеров (`driver-master`): TCP + `zlib(Lua)`, исполнение присланного Lua через LuaJ, чтение значений из таблицы `tags` по `channelId`, пул соединений. |
 | Алармы | `evaluateAlarms()` | Edge-триггер по `minValue`/`maxValue`, гистерезис (deadband 2 %), severity MINOR/MAJOR/CRITICAL. |
 | Журнал | `EventLogService` | Пишет в `event_log`: соединения, смена качества, алармы, системные события. |
 | Продюсеры | `TelemetryProducer`, `AlarmProducer`, `EventProducer` | Сериализация DTO и отправка в топики Kafka. |
-| Команды | `writeTag()` | Запись значения в OPC UA-тег по команде оператора, ответ в `scada-command-results`. |
+| Команды | `writeTag()` | Запись значения в OPC UA / Modbus / PAC-тег по команде оператора (writable-проверка: датчик RO не перезаписать), ответ в `scada-command-results`. |
 
 ---
 
@@ -184,7 +186,7 @@ flowchart LR
 
 ## 5. Контроллеры и протоколы
 
-Стенд разложен на **два контроллера** — целый прибор всегда на одном контроллере:
+Реальные **2471 канала** разложены на **два контроллера** — целый прибор всегда на одном контроллере:
 
 | Контроллер | id | Протокол | Endpoint | Каналов | Типы приборов |
 |---|---|---|---|---|---|
@@ -199,12 +201,20 @@ flowchart LR
 **Modbus TCP (j2mod).** Поля — holding-регистры: `FLOAT` = 2 регистра `float32` **little-endian**
 (как `struct.pack('<f')`), `BOOLEAN`/`INT16` = 1 регистр. Адресация `40001 → 0`.
 
+**PAC (driver-master, Savushkin/ptusa) — третий протокол.** Реальные PAC-контроллеры завода
+говорят по протоколу `driver-master` поверх TCP (порт 10000): кадр `'s'`+ServiceID+pidx+BE16-len,
+тело ответа — `zlib(Lua-скрипт)`. Шлюз (`PacClientService`) исполняет присланный Lua через **LuaJ**
+и читает значения из таблицы `tags` по `channelId`; команды оператора — `EXEC_DEVICE_COMMAND` с
+Lua `set_cmd`. Опрашивается тем же конвейером, что OPC UA/Modbus. В стенде это отдельный
+**демо-контроллер PAC** (`pac://${SIM_HOST}:10000`, 7 синтетических тегов `channelId 9001–9007`) —
+сверх 2471 архивного канала; сим поднимает PAC-сервер в том же процессе.
+
 ---
 
 ## 6. PLC-симулятор и архив
 
-В стенде роль обоих контроллеров играет **PLC-симулятор** (`plc-simulator/plc.py`), который поднимает
-OPC UA-сервер (:4840) и Modbus TCP-сервер (:5020) в одном процессе.
+В стенде роль контроллеров играет **PLC-симулятор** (`plc-simulator/plc.py`), который поднимает
+OPC UA-сервер (:4840), Modbus TCP-сервер (:5020) и PAC-сервер (:10000, driver-master) в одном процессе.
 
 - **Источник значений** — реальный архив `BN1_MCA1` (станция Барановичи-1): 170 временных рядов
   (`cid`), 5 суток, событийная запись. Собран в `data/archive_replay.pkl.gz`.
@@ -222,24 +232,26 @@ OPC UA-сервер (:4840) и Modbus TCP-сервер (:5020) в одном п�
 
 Все сообщения — JSON. Ключ сообщения телеметрии = путь канала.
 
-### TelemetryMessage → `scada-telemetry`
+### TelemetryMessage → `scada.tags`
+
+Полный формат провода — минимальный триплет (аналог OPC UA `DataValue`): **значение
++ качество + время**. Больше в теле НЕТ ничего.
+
 ```json
 {
-  "messageId": "uuid",
-  "type": "TELEMETRY",
-  "tagId": 460,
-  "tagName": "Барановичи-1.BN1_MCA1.V_M_1.LINE1V0.M",
   "value": 1.07,
-  "numericValue": 1.07,
-  "stringValue": "1.07",
-  "unit": null,
   "quality": "GOOD",
-  "timestamp": 1785226597.16,
-  "controllerId": 1,
-  "controllerName": null,
-  "metadata": { "device": "LINE1V0", "field": "M", "deviceType": "V" }
+  "timestamp": "2026-07-28T09:36:37.160Z"
 }
 ```
+
+- **`value`** идёт ТИПИЗИРОВАННЫМ (число/bool, не строкой) — монитор строит график по числу.
+- **`timestamp`** — момент снятия значения (`Instant`): sourceTime у OPC UA, момент чтения у Modbus.
+- Идентичность тега несёт **Kafka-key = путь канала** (`tag.getName()`, напр.
+  `Барановичи-1.BN1_MCA1.V_M_1.LINE1V0.M`), а НЕ тело сообщения.
+- Всё статическое — единицы, прибор/поле/тип, контроллер — монитор достраивает из
+  СВОЕГО реестра каналов по этому ключу; на проводе этого нет. Так поток лёгкий, а
+  дисплей монитора не завязан на схему БД шлюза (см. `TelemetryMessage`, `TelemetryProducer`).
 
 ### AlarmMessage → `scada-alarms`
 ```json
@@ -270,7 +282,7 @@ OPC UA-сервер (:4840) и Modbus TCP-сервер (:5020) в одном п�
 
 | Топик | Направление | Содержимое |
 |---|---|---|
-| `scada-telemetry` | шлюз → монитор | значения тегов |
+| `scada.tags` | шлюз → монитор | значения тегов |
 | `scada-alarms` | шлюз → монитор | постановка/снятие алармов |
 | `scada-events` | шлюз → монитор | соединения, качество, системные события |
 | `scada-commands` | монитор → шлюз | команды записи значения |
@@ -337,7 +349,7 @@ sequenceDiagram
     GW->>PLC: read value
     PLC-->>GW: value + quality
     GW->>GW: Alarm Engine (edge-триггер)
-    GW->>K: TELEMETRY → scada-telemetry
+    GW->>K: TELEMETRY → scada.tags
     opt значение вне уставки
       GW->>K: ALARM → scada-alarms
     end
@@ -412,7 +424,7 @@ kafka:
   enabled: true
   publish: { events: true, alarms: true }
   topics:
-    telemetry: scada-telemetry
+    telemetry: scada.tags
     alarms: scada-alarms
     events: scada-events
     commands: scada-commands
@@ -450,7 +462,7 @@ curl -s http://localhost:8888/actuator/health          # {"status":"UP"}
 
 # что уходит в Kafka (с хоста, external listener)
 docker exec scada-kafka /opt/kafka/bin/kafka-console-consumer.sh \
-  --bootstrap-server localhost:9094 --topic scada-telemetry --max-messages 5
+  --bootstrap-server localhost:9094 --topic scada.tags --max-messages 5
 
 # логи шлюза
 docker compose logs -f gateway

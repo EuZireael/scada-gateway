@@ -59,7 +59,7 @@ rectangle "Полевой уровень — контроллеры ПЛК\n(и�
 }
 
 ' =====================  ШЛЮЗ (ЭТОТ ПРОЕКТ)  ================================
-rectangle "**SCADA Gateway**  (Spring Boot 3.2.4 / Java 21)   ←  ЭТОТ проект\n«переводчик»: железо (OPC UA/Modbus)  →  шина (Kafka)" as GW #E8EAF6 {
+rectangle "**SCADA Gateway**  (Spring Boot 3.5.16 / Java 21)   ←  ЭТОТ проект\n«переводчик»: железо (OPC UA/Modbus)  →  шина (Kafka)" as GW #E8EAF6 {
   component "**OPC UA Client**  (Eclipse Milo)\nЗАБИРАЕТ значения у Phoenix.\nВсе 594 узла — ОДНИМ батч-чтением\nclient.read(...) за цикл (было 594\nотдельных запроса). Кэш NodeId." as C_OPC
   component "**Modbus Client**  (j2mod)\nЗАБИРАЕТ значения у WAGO.\nЧтение holding-регистров (FC03),\nдекод float32 LE / int16." as C_MB
   component "**Connection Supervisor**\n@Scheduled, каждые 10 с\nсторож живости связи с контроллерами" as SUP
@@ -93,10 +93,10 @@ note bottom of CFG
 end note
 
 ' =====================  ШИНА СООБЩЕНИЙ  ===================================
-queue "**Apache Kafka**  (шина между шлюзом и продуктом)\nscada-telemetry — значения тегов (основной поток)\nscada-alarms — алармы (если включены в шлюзе)\nscada-events — журнал связи/системные\nscada-commands / scada-command-results — команды оператора" as KAFKA
+queue "**Apache Kafka**  (шина между шлюзом и продуктом)\nscada.tags — значения тегов (основной поток)\nscada-alarms — алармы (если включены в шлюзе)\nscada-events — журнал связи/системные\nscada-commands / scada-command-results — команды оператора" as KAFKA
 
 ' =====================  БД ШЛЮЗА (РАНТАЙМ)  ================================
-database "**БД шлюза** — scada_db (PostgreSQL :5433)\nсобственная операционная база.\nСхему создаёт Hibernate (ddl-auto=update):\ntags · controllers · telemetry · event_log · alarms\nЗапись телеметрии — БАТЧем (saveAll), флаг\ngateway.persist-telemetry (по умолч. ВКЛ)" as GWDB
+database "**БД шлюза** — scada_db (PostgreSQL :5433)\nсобственная операционная база.\nСхема под Flyway (ddl-auto=validate только сверяет):\ntags · controllers · telemetry · event_log · alarms\nЗапись телеметрии — БАТЧем (saveAll), флаг\ngateway.persist-telemetry (по умолч. ВКЛ)" as GWDB
 
 ' =====================  РЕЕСТР КАНАЛОВ (ОФЛАЙН-ИСТОЧНИК)  ==================
 database "**Реестр каналов** — channel_dump.sql (EAV)\nnode / param / template · 3449 узлов ·\n2471 канал · 17542 param.\nОБЩИЙ источник правды о каналах (node.id)." as CHDB
@@ -157,7 +157,7 @@ ALM -down-> PROD : "алармы (если включены)"
 EVT -down-> PROD : "события / журнал"
 
 ' -- Шлюз ↔ шина --
-PROD -down-> KAFKA : "**Значения тегов**\n(tagId=node.id,\nmetadata{device,field,type})"
+PROD -down-> KAFKA : "**Значения тегов**\nkey=node.id ·\nтело {value, quality, time}"
 KAFKA -up-> PROD : "команды записи\n(scada-commands)"
 
 ' -- Шина → потребители --
@@ -178,9 +178,10 @@ legend right
   <b>2.</b> Клиенты шлюза (Milo / j2mod) забирают значения. Configuration
       Service заранее раздаёт им список тегов (что и с каким адресом читать),
       загруженный на старте из controllers.yaml.
-  <b>3.</b> Значения уходят в Kafka Producers → топик scada-telemetry с
-      tagId=node.id. Параллельно (по флагам) пишутся батчем в БД шлюза и
-      проверяются Alarm Engine.
+  <b>3.</b> Значения уходят в Kafka Producers → топик scada.tags: ключ = node.id,
+      тело — тонкий триплет {value, quality, time} (метаданные монитор достраивает
+      из своего реестра по ключу). Параллельно (по флагам) пишутся батчем в БД
+      шлюза и проверяются Alarm Engine.
   <b>4.</b> Connection Supervisor не в потоке данных — он СТОРОЖ: следит,
       что связь с контроллерами жива, и молча переподнимает её при обрыве.
   <b>5.</b> Из Kafka данные читают Монитор и мобильное приложение. Монитор
@@ -211,7 +212,7 @@ skinparam sequence {
 
 actor "Оператор" as OP
 participant "Контроллер ПЛК\n(в стенде — симулятор)" as PLC
-participant "Gateway\nOPC UA / Modbus" as GW
+participant "Gateway\nOPC UA / Modbus / PAC" as GW
 database "БД шлюза\nscada_db" as DB
 queue "Kafka" as K
 participant "Монитор\n(runtime SCADA)" as MON
@@ -219,7 +220,7 @@ participant "Монитор\n(runtime SCADA)" as MON
 == Инициализация (один раз при старте) ==
 GW -> DB : upsert 2471 тега из controllers.yaml (tagId=node.id)
 note right of GW : Теги = "что читать": адрес, тип, контроллер, уставки.
-GW -> PLC : подключиться — OPC UA :4840 и Modbus :5020
+GW -> PLC : подключиться — OPC UA :4840, Modbus :5020 и PAC :10000
 note left of PLC : Это установка СВЯЗИ С КОНТРОЛЛЕРОМ по протоколу.
 GW -> K   : событие CONNECTED → scada-events
 
@@ -233,7 +234,7 @@ loop каждый цикл опроса (в родном поколении по
   opt gateway.persist-telemetry = true
     GW -> DB : накопить и записать телеметрию БАТЧем (saveAll)
   end
-  GW -> K  : TELEMETRY {tagId=node.id, value,\nmetadata{device,field,type}} → scada-telemetry
+  GW -> K  : TELEMETRY  key=node.id · тело {value, quality, time} → scada.tags
   opt значение вне уставки (если алармы включены)
     GW -> K : ALARM {severity, threshold, cleared} → scada-alarms
   end
@@ -286,14 +287,14 @@ skinparam note {
 }
 
 node "Хост (Docker Desktop / compose)" as HOST {
-  node "scada-simulator\npython:3.11\nиграет ПЛК: OPC UA :4840, Modbus :5020" as N_SIM
+  node "scada-simulator\npython:3.11\nиграет ПЛК: OPC UA :4840, Modbus :5020, PAC :10000" as N_SIM
   node "scada-gateway\ntemurin-21-jre\nHTTP :8888 (actuator/health)" as N_GW
   queue "scada-kafka\napache/kafka (KRaft)\nвнутри сети kafka:9092\nна хост localhost:9094" as N_K
   database "scada-postgres\npostgres:16 → scada_db\nна хост localhost:5433" as N_PG
 }
 node "Монитор / клиент\n(снаружи стенда)" as N_MON
 
-N_SIM --> N_GW  : связь с «контроллерами»\nOPC UA + Modbus (SIM_HOST=simulator)
+N_SIM --> N_GW  : связь с «контроллерами»\nOPC UA + Modbus + PAC (SIM_HOST=simulator)
 N_GW  --> N_K   : публикует телеметрию/события kafka:9092
 N_GW  --> N_PG  : своя БД jdbc postgres:5432 (scada_db)
 N_K   --> N_MON : Монитор читает топики (localhost:9094)

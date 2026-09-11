@@ -1,0 +1,51 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Контроллеры на связи",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [ { "expr": "scada_controllers_connected", "refId": "A" } ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Телеметрия, сообщений/с",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [ { "expr": "rate(scada_telemetry_sent_total[1m])", "refId": "A", "legendFormat": "msg/s" } ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Команды по статусу, /с",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [ { "expr": "rate(scada_commands_total[5m])", "refId": "A", "legendFormat": "{{status}}" } ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "JVM heap, байт",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [ { "expr": "jvm_memory_used_bytes{area=\"heap\"}", "refId": "A", "legendFormat": "{{id}}" } ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["scada"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "SCADA Gateway",
+  "uid": "scada-gateway",
+  "version": 1
+}

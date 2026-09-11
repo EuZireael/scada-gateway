@@ -200,6 +200,10 @@ def main():
               f"(max(pollingRate,100) в коде). Для более частого — правь пол в OpcUaClientServiceDB.")
 
     gw_text, sim_text = build(n_opc, n_mb, args.poll_ms, args.bool_ratio)
+    # Папки вывода может не быть: loadtest/generated/ в .gitignore, а git не хранит
+    # пустые/игнорируемые папки → в свежем checkout (CI) её нет. Создаём сами.
+    for out in (args.out_gateway, args.out_sim):
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out_gateway).write_text(gw_text)
     Path(args.out_sim).write_text(sim_text)
 

@@ -61,6 +61,7 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
     private final ConfigurationService configurationService;
     private final ModbusClientService modbusClientService;
     private final ModbusBatchReader modbusBatchReader;
+    private final com.scada.gateway.pac.PacClientService pacClientService;
     private final EventLogService eventLogService;
     private final TelemetryProcessor telemetryProcessor;
 
@@ -112,6 +113,7 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
     public OpcUaClientServiceDB(ConfigurationService configurationService,
                                 ModbusClientService modbusClientService,
                                 ModbusBatchReader modbusBatchReader,
+                                com.scada.gateway.pac.PacClientService pacClientService,
                                 EventLogService eventLogService,
                                 com.scada.gateway.kafka.producer.EventProducer eventProducer,
                                 TelemetryProcessor telemetryProcessor,
@@ -119,6 +121,7 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
         this.configurationService = configurationService;
         this.modbusClientService = modbusClientService;
         this.modbusBatchReader = modbusBatchReader;
+        this.pacClientService = pacClientService;
         this.eventLogService = eventLogService;
         this.eventProducer = eventProducer;
         this.telemetryProcessor = telemetryProcessor;
@@ -281,6 +284,9 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
         if (endpoint != null && endpoint.toLowerCase().contains("modbus")) {
             log.info("📡 Modbus controller: {} at {}", controller.getName(), endpoint);
             startPollingForController(controller);
+        } else if (endpoint != null && endpoint.toLowerCase().contains("pac://")) {
+            log.info("📡 PAC controller: {} at {}", controller.getName(), endpoint);
+            startPollingForController(controller);
         } else if (endpoint != null && endpoint.toLowerCase().contains("opc.tcp")) {
             connectOpcUaController(controller);
         } else {
@@ -391,9 +397,12 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
 
         String endpoint = controller.getEndpoint();
         boolean isModbus = endpoint != null && endpoint.toLowerCase().contains("modbus");
+        boolean isPac = endpoint != null && endpoint.toLowerCase().contains("pac://");
 
         if (isModbus) {
             startModbusPolling(controller, executor, gen);
+        } else if (isPac) {
+            startPacPolling(controller, executor, gen);
         } else {
             startOpcuaPolling(controller, executor, gen);
         }
@@ -556,6 +565,69 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
         });
     }
 
+    /**
+     * Цикл опроса PAC-контроллера (протокол driver-master). Как Modbus: свой клиент
+     * (не Milo), соединение ленивое в {@link com.scada.gateway.pac.PacClientService}.
+     * Особенность протокола — один GET_DEVICES_STATES снимает состояние ВСЕХ устройств
+     * за раз, поэтому за цикл ровно один сетевой запрос, а значения тегов берутся из
+     * Lua-таблицы tags по channelId.
+     */
+    private void startPacPolling(ControllerEntity controller, ExecutorService executor, long gen) {
+        String host = com.scada.gateway.pac.PacEndpoint.host(controller.getEndpoint());
+        int port = com.scada.gateway.pac.PacEndpoint.port(controller.getEndpoint(), 10000);
+        final Long cid = controller.getId();
+
+        eventLogService.logConnection(controller, "CONNECTING", "PAC endpoint: " + controller.getEndpoint());
+
+        executor.submit(() -> {
+            while (isCurrentPoll(cid, gen)) {
+                try {
+                    List<TagEntity> tags = configurationService.getTagsForController(cid);
+                    long cycleDelay = 1000L;
+                    int goodReads = 0, badReads = 0;
+                    String lastErr = null;
+                    // Буфер точек цикла: одна saveAll в конце = одна транзакция вместо N коммитов.
+                    List<TelemetryEntity> batch = persistTelemetry ? new ArrayList<>() : null;
+
+                    // Собираем enabled PAC-теги контроллера (значения все придут одним снимком).
+                    List<TagEntity> pacTags = new ArrayList<>();
+                    for (TagEntity tag : tags) {
+                        if (!tag.isEnabled() || !TagProtocols.isPacTag(tag)) continue;
+                        pacTags.add(tag);
+                        cycleDelay = Math.min(cycleDelay, Math.max(tag.getPollingRate(), 100L));
+                    }
+
+                    for (com.scada.gateway.pac.PacClientService.Reading r :
+                            pacClientService.read(host, port, pacTags)) {
+                        Object value = r.value();
+                        if (value != null) goodReads++; else badReads++;
+                        if (value == null && lastErr == null) lastErr = "PAC read failed";
+                        // A2: у PAC источника времени в протоколе нет — момент завершения чтения.
+                        telemetryProcessor.processTagValue(r.tag(), value,
+                                value != null ? "GOOD" : "BAD", Instant.now(), batch);
+                    }
+
+                    if (batch != null && !batch.isEmpty()) telemetryProcessor.flushTelemetry(batch);
+
+                    if (isCurrentPoll(cid, gen)) {
+                        if (goodReads > 0) markControllerUp(controller);
+                        else if (badReads > 0) markControllerDown(controller,
+                                "PAC reads failing" + (lastErr != null ? ": " + lastErr : ""));
+                    }
+
+                    Thread.sleep(cycleDelay);
+
+                } catch (InterruptedException e) {
+                    log.debug("PAC polling interrupted for {}", controller.getName());
+                    break;
+                } catch (Exception e) {
+                    log.error("PAC polling error for {}: {}", controller.getName(), e.getMessage());
+                    eventLogService.logError("PacClient", "Polling error for " + controller.getName(), e, null, controller);
+                }
+            }
+        });
+    }
+
     // --- Порты для CommandService (DIP): god-класс — владелец живых карт (кэш тегов,
     // OPC UA-клиенты), поэтому отдаёт их только на ЧТЕНИЕ. Сама логика записи
     // (writeTag/writeOpcUa/writeModbus) переехала в com.scada.gateway.command.CommandService.
@@ -611,6 +683,7 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
         }
 
         modbusClientService.disconnectAll();
+        pacClientService.disconnectAll();
         log.info("Shutdown complete");
     }
 }
