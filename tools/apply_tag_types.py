@@ -24,9 +24,20 @@
    (регистр шестнадцатибитный, кодировки строк нет ни в симуляторе, ни в шлюзе),
    поэтому строки всегда остаются на OPC UA, даже если писать в них нечего.
 
-Генерация значений при этом снимается полностью: ни `generator`, ни
-`replay_source` у тегов не остаётся, блок `replay` выключается. Теги стоят на
-начальном значении, и OPC UA-теги меняются только тем, что записал оператор.
+Данные идут по ВСЕМ трём протоколам: контроллер, который ничего не передаёт, —
+это не контроллер. Каждому каналу назначается серия пятисуточного архива по
+смыслу поля: дискретная для состояний и режимов, аналоговая для измеряемых
+величин, целочисленная для кодов и счётчиков. Серии с отрицательными значениями
+не берутся вообще — именно они когда-то дали минус на расходе и уровне.
+
+Одна серия достаётся многим каналам, поэтому каждому проставляется свой
+`replay_offset` — сдвиг точки воспроизведения внутри архива. Без него группа
+каналов меняется синхронно и сразу читается как подделка.
+
+Архив числовой, а часть каналов по базе строковые, поэтому им дополнительно
+проставляется `replay_format`: число из архива превращается в метку вида
+"REC-07". Запись оператора по-прежнему перебивает реплей через латч в
+`core/plc.py`: тег ведётся архивом до первой команды, дальше держит ручное.
 
 Карта Modbus-регистров перекладывается с нуля, подряд от 40001: `FLOAT` занимает
 два регистра (`float32`), `INT32` — один (`int16`). Так карта остаётся плотной и
@@ -42,6 +53,10 @@ import re
 import sys
 from pathlib import Path
 
+import gzip
+import pickle
+
+import numpy as np
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -62,6 +77,47 @@ READ_ONLY_FIELDS = {
 READ_ONLY_GROUPS = ("Статистика_линии",)
 
 SIM_TYPE = {"INT32": "int", "FLOAT": "float", "STRING": "string"}
+
+ARCHIVE = ROOT / "plc-simulator/data/archive_replay.pkl.gz"
+
+# Целые поля, которые по сути двоичные: состояние, режим, концевик, мигалка.
+BINARY_FIELDS = {"ST", "M", "R", "EST", "NAMUR_ST", "BLINK", "OPENED", "CLOSED",
+                 "NODEENABLED"}
+
+# Архив числовой, поэтому строковым каналам подставляем метку по числу из архива.
+STRING_FORMATS = {
+    "CUR_REC": "REC-%02d", "LOADED_REC": "REC-%02d", "REC_LIST": "REC-01..REC-%02d",
+    "CUR_PRG": "PRG-%02d", "PRG_LIST": "PRG-01..PRG-%02d",
+    "UP_TIME": "%d ч", "CMD_ANSWER": "OK-%d",
+}
+
+# Минимум переключений за архив, иначе дискретный канал выглядит замороженным.
+MIN_TRANSITIONS = 10
+
+
+def series_pools():
+    """Серии архива по характеру значений. Отрицательные не берём вообще:
+    именно они когда-то дали минус на расходе и уровне, где его быть не может."""
+    data = pickle.load(gzip.open(ARCHIVE, "rb"))
+    series, duration = data["series"], data["duration"]
+    discrete, small, counter, analog = [], [], [], []
+    for cid, s in sorted(series.items()):
+        v = np.asarray(s["v"], dtype=float)
+        if v.min() < 0:
+            continue
+        if not np.all(np.abs(v - np.round(v)) < 1e-6):
+            analog.append(cid)
+            continue
+        if len(np.unique(v)) <= 2:
+            if int((np.diff(v) != 0).sum()) >= MIN_TRANSITIONS:
+                discrete.append((int((np.diff(v) != 0).sum()), cid))
+        elif v.max() <= 20:
+            small.append(cid)
+        elif v.max() <= 600:
+            counter.append(cid)
+    discrete = [cid for _, cid in sorted(discrete, reverse=True)]
+    return {"discrete": discrete, "small": small, "counter": counter,
+            "analog": analog}, duration
 
 
 def load_spec(csv_path):
@@ -92,14 +148,16 @@ def quote(value):
 def sim_line(tag):
     """Строка тега в конфиге симулятора, компактным потоковым отображением."""
     parts = [f'name: {quote(tag["address"])}', f'address: {quote(tag["address"])}',
+             f'replay_source: {tag["replay_source"]}',
              f'type: {tag["type"]}', f'protocol: {tag["protocol"]}']
     if tag["protocol"] == "modbus":
         parts += [f'modbus_address: {tag["modbus_address"]}',
                   f'modbus_type: {tag["modbus_type"]}']
     parts += [f'device: {quote(tag["device"])}', f'field: {quote(tag["field"])}',
-              f'dev_type: {quote(tag["dev_type"])}', f'access: {tag["access"]}']
-    if tag["type"] == "string":
-        parts.append('initial: ""')
+              f'dev_type: {quote(tag["dev_type"])}', f'access: {tag["access"]}',
+              "generator: replay", f'replay_offset: {tag["replay_offset"]}']
+    if tag.get("replay_format"):
+        parts.append(f'replay_format: {quote(tag["replay_format"])}')
     parts += ["noise_enabled: false", "drift_enabled: false"]
     return "    - {" + ", ".join(parts) + "}\n"
 
@@ -156,8 +214,9 @@ SIM_HEADER = """# Симулятор = ТРИ КОНТРОЛЛЕРА с родн
 #   PAC Demo          — каналов {pac}: демонстрация третьего протокола, значения синтетические
 # Типы полей заданы справочником docs/BN1_MCA1-типы-тегов.csv; раскладку делает
 # tools/apply_tag_types.py. Писать можно только по OPC UA: Modbus здесь на чтение.
-# Воспроизведение архива ВЫКЛЮЧЕНО — теги стоят на начальном значении и меняются
-# только записью оператора. channelId = node.id из базы каналов.
+# Значения и тайминг — из пятисуточного архива BN1_MCA1, у каждого канала свой
+# сдвиг внутри записи. Запись оператора перебивает архив (латч в core/plc.py).
+# channelId = node.id из базы каналов.
 """
 
 CTL_HEADER = """# Три контроллера: Phoenix (OPC UA, каналов {opc}), WAGO (Modbus TCP, каналов {mod})
@@ -233,6 +292,39 @@ def main():
         item["modbus_type"] = "float32" if item["type"] == "FLOAT" else "int16"
         register += 2 if item["type"] == "FLOAT" else 1
 
+    # --- Источник данных: каждому каналу серия архива по смыслу поля ---------
+    pools, duration = series_pools()
+    cursors = {}
+
+    def take(name, pool):
+        idx = cursors.get(name, 0)
+        cursors[name] = idx + 1
+        return pool[idx % len(pool)]
+
+    for item in plan:
+        field, declared = item["tag"]["fieldName"], item["type"]
+        if declared == "STRING":
+            pool = "small"
+        elif declared == "FLOAT":
+            pool = "analog"
+        elif field in BINARY_FIELDS:
+            pool = "discrete"
+        else:
+            pool = "counter" if pools["counter"] else "small"
+        item["pool"] = pool
+        item["replay_source"] = take(pool, pools[pool])
+        if declared == "STRING":
+            item["replay_format"] = STRING_FORMATS.get(field, "%d")
+    # Каналы, сидящие на одной серии, разводим по времени: иначе вся группа
+    # меняется синхронно и на мнемосхеме это читается как подделка.
+    groups = {}
+    for item in plan:
+        groups.setdefault(item["replay_source"], []).append(item)
+    for members in groups.values():
+        step = duration / len(members)
+        for n, item in enumerate(members):
+            item["replay_offset"] = round(n * step, 1)
+
     opc_items = [i for i in plan if i["protocol"] == "opcua"]
     mod_items = [i for i in plan if i["protocol"] == "modbus"]
 
@@ -271,7 +363,10 @@ def main():
         out = {"address": cid, "type": SIM_TYPE[item["type"]],
                "protocol": item["protocol"], "device": src["device"],
                "field": src["field"], "dev_type": src["dev_type"],
-               "access": "RW" if item["writable"] else "RO"}
+               "access": "RW" if item["writable"] else "RO",
+               "replay_source": item["replay_source"],
+               "replay_offset": item["replay_offset"],
+               "replay_format": item.get("replay_format")}
         if item["protocol"] == "modbus":
             out.update(modbus_address=item["modbus_register"],
                        modbus_type=item["modbus_type"])
@@ -286,22 +381,9 @@ def main():
     # Вторая группа — демонстрационные PAC-теги, их не трогаем.
     blocks = [[sim_line(sim_tag(i)) for i in plan]] + [[sim_lines[i] for i in r] for r in runs[1:]]
     sim_lines = splice(sim_lines, runs, blocks)
-    # Генерации больше нет — выключаем и сам движок реплея.
-    sim_lines = [l.replace("  enabled: true", "  enabled: false")
-                 if l.startswith("  enabled: true") else l for l in sim_lines]
-    # Демонстрационный PAC-блок жил на реплее, а движок теперь выключен. Чтобы
-    # третий протокол не застыл, переводим его теги состояния на меандр 0/1.
-    pac_periods = iter((20, 35, 50))
-    fixed = []
-    for line in sim_lines:
-        if "protocol: pac" in line and "generator: replay" in line:
-            line = re.sub(r"replay_source: \w+, ", "", line)
-            line = line.replace(
-                "generator: replay",
-                "generator: pulse, generator_params: {period: %d, duty_cycle: 0.5, "
-                "on_value: 1, off_value: 0}" % next(pac_periods))
-        fixed.append(line)
-    sim_lines = fixed
+    # Данные идут по всем трём протоколам, значит движок реплея включён.
+    sim_lines = [l.replace("  enabled: false", "  enabled: true")
+                 if l.startswith("  enabled: false") else l for l in sim_lines]
     SIM.write_text("".join(rewrite_headers(sim_lines, SIM_HEADER, len(opc_items),
                                            len(mod_items), len(pac))), encoding="utf-8")
 

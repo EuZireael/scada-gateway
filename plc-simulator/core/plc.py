@@ -391,7 +391,14 @@ class PLCSimulator:
                 src = getattr(tag, 'replay_source', tag.address)
                 if not self.replay.has(src):
                     continue
-                value = self.replay.value_at(src, offset)
+                # Одна архивная серия достаётся многим каналам, и без сдвига они
+                # меняются синхронно — на мнемосхеме это сразу видно как подделка.
+                # Индивидуальный сдвиг разводит их по времени внутри той же записи.
+                shift = getattr(tag, 'replay_offset', 0) or 0
+                pos = offset + shift
+                if self.replay.duration > 0:
+                    pos %= self.replay.duration
+                value = self.replay.value_at(src, pos)
                 tag.set_replay_value(value)
 
     async def update_loop(self):
