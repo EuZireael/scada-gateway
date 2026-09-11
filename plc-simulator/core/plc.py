@@ -373,6 +373,7 @@ class PLCSimulator:
                     and getattr(tag, 'field', None) == field
                     and getattr(getattr(tag, 'access', None), 'value', None) == "RW"):
                 tag.value = value
+                tag._operator_override = True   # защёлкиваемся, см. apply_replay
                 return
         logger.warning(f"PAC: RW-тег {device}.{field} не найден — запись отброшена")
 
@@ -384,6 +385,12 @@ class PLCSimulator:
         for db in self.data_blocks.values():
             for tag in db.get_all_tags():
                 if getattr(tag, 'generator', None) != "replay":
+                    continue
+                # Оператор перебил значение — архив его больше не трогает. Для
+                # OPC UA это дублирует латч в update_loop, а для PAC это ЕДИНСТВЕННАЯ
+                # защита: там нет обратного чтения узла, и без проверки ручная
+                # уставка жила бы до ближайшего цикла реплея.
+                if getattr(tag, '_operator_override', False):
                     continue
                 # Данные берём по replay_source (может быть общим для нескольких
                 # тегов), а не по address — так один архивный сигнал дублируется

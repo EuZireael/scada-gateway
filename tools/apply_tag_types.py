@@ -76,6 +76,19 @@ READ_ONLY_FIELDS = {
 # Статистика линии целиком считается контроллером.
 READ_ONLY_GROUPS = ("Статистика_линии",)
 
+# Приборы первой линии ведёт PAC-контроллер Savushkin: его протокол объектный
+# (devices['1V1']={type='V',fields={'ST','M'}}), а это ровно приборные каналы.
+# Строки PAC не умеет — там только числа, — но их среди приборных полей и нет.
+PAC_DEVICE_PREFIX = "LINE1"
+PARAMETER_GROUPS = ("Параметры", "Редактируемый", "Статистика", "Управляющие")
+
+
+def on_pac(group, device):
+    """Прибор первой линии, а не параметрическая группа."""
+    if group.startswith(PARAMETER_GROUPS) or group == "SYSTEM":
+        return False
+    return (device or "").startswith(PAC_DEVICE_PREFIX)
+
 SIM_TYPE = {"INT32": "int", "FLOAT": "float", "STRING": "string"}
 
 ARCHIVE = ROOT / "plc-simulator/data/archive_replay.pkl.gz"
@@ -170,6 +183,8 @@ def ctl_line(tag):
     if tag.get("protocol") == "modbus":
         parts += ["protocol: modbus", f'modbusAddress: {tag["modbusAddress"]}',
                   f'modbusType: {tag["modbusType"]}', "modbusUnitId: 1"]
+    elif tag.get("protocol") == "pac":
+        parts.append("protocol: pac")
     parts += [f'dataType: {tag["dataType"]}', "pollingRate: 2000", "enabled: true"]
     if tag.get("writable"):
         parts.append("writable: true")
@@ -211,7 +226,7 @@ def splice(lines, runs, blocks):
 SIM_HEADER = """# Симулятор = ТРИ КОНТРОЛЛЕРА с родными форматами. Целый прибор на один контроллер.
 #   Phoenix / OPC UA  — каналов {opc}: приборы как объекты, поля = типизированные узлы
 #   WAGO / Modbus TCP — каналов {mod}: поля = регистры (INT32 → int16, FLOAT → float32, 2 рег.)
-#   PAC Demo          — каналов {pac}: демонстрация третьего протокола, значения синтетические
+#   PAC Savushkin     — каналов {pac}: приборы первой линии, протокол driver-master
 # Типы полей заданы справочником docs/BN1_MCA1-типы-тегов.csv; раскладку делает
 # tools/apply_tag_types.py. Писать можно только по OPC UA: Modbus здесь на чтение.
 # Значения и тайминг — из пятисуточного архива BN1_MCA1, у каждого канала свой
@@ -220,7 +235,7 @@ SIM_HEADER = """# Симулятор = ТРИ КОНТРОЛЛЕРА с родн
 """
 
 CTL_HEADER = """# Три контроллера: Phoenix (OPC UA, каналов {opc}), WAGO (Modbus TCP, каналов {mod})
-# и PAC Demo (каналов {pac}). Целый прибор на один контроллер; tagId = channelId = node.id;
+# и PAC Savushkin (каналов {pac}, приборы первой линии). Целый прибор на один контроллер; tagId = channelId = node.id;
 # device/field/type уезжают в Kafka как метаданные, монитор собирает из них прибор.
 # Типы полей заданы справочником docs/BN1_MCA1-типы-тегов.csv, раскладку делает
 # tools/apply_tag_types.py. Запись разрешена только по OPC UA.
@@ -258,10 +273,8 @@ def main():
     sim_doc = yaml.safe_load(SIM.read_text(encoding="utf-8"))
     sim_by_id = {str(t["address"]): t for t in sim_doc["plc"]["data_blocks"][0]["tags"]}
 
-    station, pac = [], []
-    for server in ctl_doc["opcua"]["servers"]:
-        for t in server["tags"]:
-            (station if t["name"].startswith(PREFIX) else pac).append(t)
+    station = [t for server in ctl_doc["opcua"]["servers"] for t in server["tags"]
+               if t["name"].startswith(PREFIX)]
     # Порядок вывода не должен зависеть от того, как теги лежали во входном файле,
     # иначе повторный прогон переставляет строки и перекладывает карту регистров.
     station.sort(key=lambda t: t["channelId"])
@@ -275,11 +288,17 @@ def main():
         if declared is None:
             sys.exit(f"в CSV нет типа для {group}.{field}")
         read_only = is_read_only(group, field)
-        # Строка на Modbus нереализуема — такие теги остаются на OPC UA.
-        on_modbus = read_only and declared != "STRING"
+        if on_pac(group, t["deviceName"]):
+            # Прибор целиком принадлежит одному контроллеру, включая его
+            # измеряемые каналы: делить прибор между протоколами бессмысленно.
+            protocol = "pac"
+        elif read_only and declared != "STRING":
+            # Строка на Modbus нереализуема — такие теги остаются на OPC UA.
+            protocol = "modbus"
+        else:
+            protocol = "opcua"
         plan.append({
-            "tag": t, "type": declared,
-            "protocol": "modbus" if on_modbus else "opcua",
+            "tag": t, "type": declared, "protocol": protocol,
             "writable": not read_only,
         })
 
@@ -327,6 +346,7 @@ def main():
 
     opc_items = [i for i in plan if i["protocol"] == "opcua"]
     mod_items = [i for i in plan if i["protocol"] == "modbus"]
+    pac_items = [i for i in plan if i["protocol"] == "pac"]
 
     # --- Конфиг шлюза ---------------------------------------------------------
     def ctl_tag(item):
@@ -338,6 +358,8 @@ def main():
             address = MODBUS_BASE + item["modbus_register"]
             out.update(nodeId=f"modbus:{address}", protocol="modbus",
                        modbusAddress=address, modbusType=item["modbus_type"])
+        elif item["protocol"] == "pac":
+            out.update(nodeId=f"pac:{cid}", protocol="pac")
         else:
             out["nodeId"] = f"ns=2;s={cid}"
         return out
@@ -350,16 +372,21 @@ def main():
     ctl_blocks = [
         [ctl_line(ctl_tag(i)) for i in opc_items],
         [ctl_line(ctl_tag(i)) for i in mod_items],
-        [l for l in ctl_lines if l.lstrip().startswith('- {name: "PAC_DEMO')],
+        [ctl_line(ctl_tag(i)) for i in pac_items],
     ]
     spliced = splice(ctl_lines, tag_groups(ctl_lines, "- {name:", ctl_section), ctl_blocks)
+    # Контроллер больше не демонстрационный: он везёт реальные приборы линии.
+    # Идентификатор оставляем прежним, чтобы не плодить строку в таблице контроллеров.
+    spliced = [l.replace('name: "PAC Demo"', 'name: "PAC Savushkin"') for l in spliced]
     CTL.write_text("".join(rewrite_headers(spliced, CTL_HEADER, len(opc_items),
-                                           len(mod_items), len(pac))), encoding="utf-8")
+                                           len(mod_items), len(pac_items))), encoding="utf-8")
 
     # --- Конфиг симулятора ----------------------------------------------------
     def sim_tag(item):
         cid = str(item["tag"]["channelId"])
-        src = sim_by_id[cid]
+        src = sim_by_id.get(cid) or {
+            "device": item["tag"]["deviceName"], "field": item["tag"]["fieldName"],
+            "dev_type": item["tag"]["deviceType"]}
         out = {"address": cid, "type": SIM_TYPE[item["type"]],
                "protocol": item["protocol"], "device": src["device"],
                "field": src["field"], "dev_type": src["dev_type"],
@@ -374,18 +401,16 @@ def main():
 
     sim_lines = SIM.read_text(encoding="utf-8").splitlines(keepends=True)
 
-    def sim_section(line, current):
-        return "pac" if "protocol: pac" in line else ("station" if line.lstrip().startswith("- {name:") else current)
-
-    runs = tag_groups(sim_lines, "- {name:", sim_section)
-    # Вторая группа — демонстрационные PAC-теги, их не трогаем.
-    blocks = [[sim_line(sim_tag(i)) for i in plan]] + [[sim_lines[i] for i in r] for r in runs[1:]]
+    # Демонстрационные PAC-теги убраны: PAC везёт реальные приборы первой линии,
+    # поэтому у симулятора остаётся один общий список каналов станции.
+    runs = tag_groups(sim_lines, "- {name:", lambda line, current: "station")
+    blocks = [[sim_line(sim_tag(i)) for i in plan]]
     sim_lines = splice(sim_lines, runs, blocks)
     # Данные идут по всем трём протоколам, значит движок реплея включён.
     sim_lines = [l.replace("  enabled: false", "  enabled: true")
                  if l.startswith("  enabled: false") else l for l in sim_lines]
     SIM.write_text("".join(rewrite_headers(sim_lines, SIM_HEADER, len(opc_items),
-                                           len(mod_items), len(pac))), encoding="utf-8")
+                                           len(mod_items), len(pac_items))), encoding="utf-8")
 
     print(f"станционных тегов: {len(plan)}")
     print(f"  OPC UA: {len(opc_items)} ({len(opc_items)/len(plan)*100:.1f}%), "
@@ -396,7 +421,8 @@ def main():
     for i in plan:
         types[i["type"]] = types.get(i["type"], 0) + 1
     print(f"  типы: {types}")
-    print(f"демонстрационных PAC-тегов сохранено: {len(pac)}")
+    print(f"  PAC:    {len(pac_items)} ({len(pac_items)/len(plan)*100:.1f}%), "
+          f"приборы линии {PAC_DEVICE_PREFIX[4:]}")
 
 
 if __name__ == "__main__":
