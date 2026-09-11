@@ -90,7 +90,15 @@ class Tag:
         self._last_time = time.time()
         self._phase = 0.0
         self._random_walk_value = self._value
-        
+
+        # Латч оператора для RW-тегов, у которых ЕСТЬ источник данных
+        # (generator/replay). Пока оператор не записал своё значение, тег ведётся
+        # архивом/генератором и остаётся writable; после первой записи оператора
+        # «защёлкивается» на ручном значении и держит его (см. plc.py update_loop).
+        # Для чистых актуаторов (без generator) латч не используется.
+        self._operator_override = False
+        self._last_pushed = None
+
         # OPC UA аттрибуты
         self.opcua_node_obj = None
         

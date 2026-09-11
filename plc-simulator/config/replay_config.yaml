@@ -154,9 +154,9 @@ plc:
     - {name: "594", address: "594", type: bool, protocol: opcua, device: "LINE2M1002", field: "ST", dev_type: "M", access: RW, noise_enabled: false, drift_enabled: false}
     - {name: "617", address: "617", replay_source: 2A130001, type: float, protocol: opcua, device: "LINE2M1002", field: "M", dev_type: "M", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "640", address: "640", type: float, protocol: opcua, device: "LINE2M1002", field: "P_ON_TIME", dev_type: "M", access: RW, noise_enabled: false, drift_enabled: false}
-    - {name: "662", address: "662", replay_source: 2A0D0000, type: bool, protocol: opcua, device: "LINE1LS1", field: "ST", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "662", address: "662", replay_source: 2A0D0000, type: bool, protocol: opcua, device: "LINE1LS1", field: "ST", dev_type: "LS", access: RW, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "711", address: "711", replay_source: 2A3B0002, type: float, protocol: opcua, device: "LINE1LS1", field: "M", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
-    - {name: "666", address: "666", replay_source: 2A0D0002, type: bool, protocol: opcua, device: "LINE1LS3", field: "ST", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "666", address: "666", replay_source: 2A0D0002, type: bool, protocol: opcua, device: "LINE1LS3", field: "ST", dev_type: "LS", access: RW, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "715", address: "715", replay_source: 2A4D0001, type: float, protocol: opcua, device: "LINE1LS3", field: "M", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "668", address: "668", replay_source: 2A010016, type: bool, protocol: opcua, device: "LS4", field: "ST", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "717", address: "717", replay_source: 2A4D0002, type: float, protocol: opcua, device: "LS4", field: "M", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
@@ -200,7 +200,7 @@ plc:
     - {name: "755", address: "755", replay_source: 2A130002, type: float, protocol: opcua, device: "LINE6LS2", field: "M", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "708", address: "708", replay_source: 2A010033, type: bool, protocol: opcua, device: "LINE6LS3", field: "ST", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "757", address: "757", replay_source: 2A1D0000, type: float, protocol: opcua, device: "LINE6LS3", field: "M", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
-    - {name: "835", address: "835", replay_source: 2A150000, type: bool, protocol: opcua, device: "LINE1FS1", field: "ST", dev_type: "FS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "835", address: "835", replay_source: 2A150000, type: bool, protocol: opcua, device: "LINE1FS1", field: "ST", dev_type: "FS", access: RW, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "848", address: "848", replay_source: 2A0A0009, type: float, protocol: opcua, device: "LINE1FS1", field: "M", dev_type: "FS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "837", address: "837", replay_source: 2A150001, type: bool, protocol: opcua, device: "LINE2FS1", field: "ST", dev_type: "FS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "850", address: "850", replay_source: 2A0D0001, type: float, protocol: opcua, device: "LINE2FS1", field: "M", dev_type: "FS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
@@ -232,7 +232,7 @@ plc:
     - {name: "1026", address: "1026", replay_source: 2A370006, type: float, protocol: opcua, device: "CAB5SB1", field: "M", dev_type: "SB", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1029", address: "1029", replay_source: 2A150003, type: bool, protocol: opcua, device: "LINE1DI1101", field: "ST", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1110", address: "1110", replay_source: 2A370007, type: float, protocol: opcua, device: "LINE1DI1101", field: "M", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
-    - {name: "1031", address: "1031", replay_source: 2A150004, type: bool, protocol: opcua, device: "LINE1DI1102", field: "ST", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "1031", address: "1031", replay_source: 2A150004, type: bool, protocol: opcua, device: "LINE1DI1102", field: "ST", dev_type: "DI", access: RW, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1112", address: "1112", replay_source: 2A3B0000, type: float, protocol: opcua, device: "LINE1DI1102", field: "M", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1033", address: "1033", replay_source: 2A150005, type: bool, protocol: opcua, device: "LINE1DI1103", field: "ST", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1114", address: "1114", replay_source: 2A3B0001, type: float, protocol: opcua, device: "LINE1DI1103", field: "M", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
@@ -252,7 +252,7 @@ plc:
     - {name: "1128", address: "1128", replay_source: 2A510002, type: float, protocol: opcua, device: "LINE1DI1110", field: "M", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1049", address: "1049", replay_source: 2A370009, type: bool, protocol: opcua, device: "LINE1DI1111", field: "ST", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1130", address: "1130", replay_source: 2A630000, type: float, protocol: opcua, device: "LINE1DI1111", field: "M", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
-    - {name: "1051", address: "1051", replay_source: 2A580009, type: bool, protocol: opcua, device: "LINE1DI1118", field: "ST", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "1051", address: "1051", replay_source: 2A580009, type: bool, protocol: opcua, device: "LINE1DI1118", field: "ST", dev_type: "DI", access: RW, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1132", address: "1132", replay_source: 2A630001, type: float, protocol: opcua, device: "LINE1DI1118", field: "M", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1053", address: "1053", replay_source: 2A58000A, type: bool, protocol: opcua, device: "LINE1DI1119", field: "ST", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1134", address: "1134", replay_source: 2A630002, type: float, protocol: opcua, device: "LINE1DI1119", field: "M", dev_type: "DI", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
@@ -601,7 +601,7 @@ plc:
     - {name: "626", address: "626", type: float, protocol: opcua, device: "V103", field: "P_ON_TIME", dev_type: "M", access: RW, noise_enabled: false, drift_enabled: false}
     - {name: "645", address: "645", replay_source: 2A320001, type: float, protocol: opcua, device: "M1", field: "V", dev_type: "M", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "647", address: "647", replay_source: 2A360006, type: float, protocol: opcua, device: "M2", field: "V", dev_type: "M", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
-    - {name: "664", address: "664", replay_source: 2A0D0001, type: float, protocol: opcua, device: "LINE1LS2", field: "ST", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "664", address: "664", replay_source: 2A0D0001, type: float, protocol: opcua, device: "LINE1LS2", field: "ST", dev_type: "LS", access: RW, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "713", address: "713", replay_source: 2A4D0000, type: float, protocol: opcua, device: "LINE1LS2", field: "M", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "1191", address: "1191", type: float, protocol: opcua, device: "LINE1DO1101", field: "ST", dev_type: "DO", access: RW, noise_enabled: false, drift_enabled: false}
     - {name: "1250", address: "1250", replay_source: 2A360009, type: float, protocol: opcua, device: "LINE1DO1101", field: "M", dev_type: "DO", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
@@ -612,7 +612,7 @@ plc:
     - {name: "861", address: "861", replay_source: 2A010034, type: bool, protocol: modbus, modbus_address: 0, modbus_type: int16, device: "LINE1FQT1", field: "ST", dev_type: "FQT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "906", address: "906", replay_source: 2A1F0000, type: bool, protocol: modbus, modbus_address: 1, modbus_type: int16, device: "LINE1FQT1", field: "P_CZ", dev_type: "FQT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "876", address: "876", replay_source: 2A1D0001, type: float, protocol: modbus, modbus_address: 2, modbus_type: float32, device: "LINE1FQT1", field: "M", dev_type: "FQT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
-    - {name: "891", address: "891", replay_source: 2A310000, type: float, protocol: modbus, modbus_address: 4, modbus_type: float32, device: "LINE1FQT1", field: "V", dev_type: "FQT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "891", address: "891", replay_source: 2A310000, type: float, protocol: opcua, device: "LINE1FQT1", field: "V", dev_type: "FQT", access: RW, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "921", address: "921", replay_source: 2A3B0002, type: float, protocol: modbus, modbus_address: 6, modbus_type: float32, device: "LINE1FQT1", field: "F", dev_type: "FQT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "936", address: "936", replay_source: 2A630000, type: float, protocol: modbus, modbus_address: 8, modbus_type: float32, device: "LINE1FQT1", field: "P_DT", dev_type: "FQT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "951", address: "951", replay_source: 2A050001, type: float, protocol: modbus, modbus_address: 10, modbus_type: float32, device: "LINE1FQT1", field: "ABS_V", dev_type: "FQT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
@@ -1232,7 +1232,7 @@ plc:
     - {name: "810", address: "810", replay_source: 2A510002, type: float, protocol: modbus, modbus_address: 1209, modbus_type: float32, device: "LINE1TE1", field: "V", dev_type: "TE", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "762", address: "762", replay_source: 2A1D0002, type: float, protocol: modbus, modbus_address: 1211, modbus_type: float32, device: "LINE1TE2", field: "M", dev_type: "TE", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "787", address: "787", replay_source: 2A360009, type: float, protocol: modbus, modbus_address: 1213, modbus_type: float32, device: "LINE1TE2", field: "P_CZ", dev_type: "TE", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
-    - {name: "812", address: "812", replay_source: 2A630000, type: float, protocol: modbus, modbus_address: 1215, modbus_type: float32, device: "LINE1TE2", field: "V", dev_type: "TE", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "812", address: "812", replay_source: 2A630000, type: float, protocol: opcua, device: "LINE1TE2", field: "V", dev_type: "TE", access: RW, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "764", address: "764", replay_source: 2A1D0003, type: float, protocol: modbus, modbus_address: 1217, modbus_type: float32, device: "LINE2TE1", field: "M", dev_type: "TE", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "789", address: "789", replay_source: 2A370006, type: float, protocol: modbus, modbus_address: 1219, modbus_type: float32, device: "LINE2TE1", field: "P_CZ", dev_type: "TE", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "814", address: "814", replay_source: 2A630001, type: float, protocol: modbus, modbus_address: 1221, modbus_type: float32, device: "LINE2TE1", field: "V", dev_type: "TE", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
@@ -2486,6 +2486,54 @@ plc:
     - {name: "2772", address: "2772", replay_source: 2A130002, type: float, protocol: modbus, modbus_address: 3717, modbus_type: float32, device: "OBJECT6", field: "RT_PAR_F[134]", dev_type: "Статистика_линии", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "2773", address: "2773", replay_source: 2A1D0000, type: float, protocol: modbus, modbus_address: 3719, modbus_type: float32, device: "OBJECT6", field: "RT_PAR_F[135]", dev_type: "Статистика_линии", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
     - {name: "2774", address: "2774", replay_source: 2A1D0001, type: float, protocol: modbus, modbus_address: 3721, modbus_type: float32, device: "OBJECT6", field: "RT_PAR_F[136]", dev_type: "Статистика_линии", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+
+    # --- 04.09.2026: недостающие каналы из бэкафилла .cdbx (scada-fsw), без архивных данных ---
+    - {name: "3722", address: "3722", type: float, protocol: opcua, device: "LINE1LS1", field: "P_DT", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3723", address: "3723", type: float, protocol: opcua, device: "LINE1LS1", field: "P_ERR", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3724", address: "3724", type: float, protocol: opcua, device: "LINE1LS1", field: "V", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3725", address: "3725", type: float, protocol: opcua, device: "LINE1LS2", field: "P_DT", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3726", address: "3726", type: float, protocol: opcua, device: "LINE1LS2", field: "P_ERR", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3727", address: "3727", type: float, protocol: opcua, device: "LINE1LS2", field: "V", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3728", address: "3728", type: float, protocol: opcua, device: "LINE1LS3", field: "P_DT", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3729", address: "3729", type: float, protocol: opcua, device: "LINE1LS3", field: "P_ERR", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3730", address: "3730", type: float, protocol: opcua, device: "LINE1LS3", field: "V", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3731", address: "3731", type: float, protocol: opcua, device: "LS4", field: "P_DT", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3732", address: "3732", type: float, protocol: opcua, device: "LS4", field: "P_ERR", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3733", address: "3733", type: float, protocol: opcua, device: "LS4", field: "V", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3734", address: "3734", type: float, protocol: opcua, device: "LS5", field: "P_DT", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3735", address: "3735", type: float, protocol: opcua, device: "LS5", field: "P_ERR", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3736", address: "3736", type: float, protocol: opcua, device: "LS5", field: "V", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3737", address: "3737", type: float, protocol: opcua, device: "LS6", field: "P_DT", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3738", address: "3738", type: float, protocol: opcua, device: "LS6", field: "P_ERR", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3739", address: "3739", type: float, protocol: opcua, device: "LS6", field: "V", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3740", address: "3740", type: float, protocol: opcua, device: "LS7", field: "P_DT", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3741", address: "3741", type: float, protocol: opcua, device: "LS7", field: "P_ERR", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3742", address: "3742", type: float, protocol: opcua, device: "LS7", field: "V", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3743", address: "3743", type: float, protocol: opcua, device: "LS8", field: "P_DT", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3744", address: "3744", type: float, protocol: opcua, device: "LS8", field: "P_ERR", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3745", address: "3745", type: float, protocol: opcua, device: "LS8", field: "V", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3746", address: "3746", type: float, protocol: opcua, device: "LS9", field: "P_DT", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3747", address: "3747", type: float, protocol: opcua, device: "LS9", field: "P_ERR", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3748", address: "3748", type: float, protocol: opcua, device: "LS9", field: "V", dev_type: "LS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3749", address: "3749", type: float, protocol: modbus, modbus_address: 3723, modbus_type: float32, device: "LT1", field: "P_ERR", dev_type: "LT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3750", address: "3750", type: float, protocol: modbus, modbus_address: 3725, modbus_type: float32, device: "LT2", field: "P_ERR", dev_type: "LT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3751", address: "3751", type: float, protocol: modbus, modbus_address: 3727, modbus_type: float32, device: "LT3", field: "P_ERR", dev_type: "LT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3752", address: "3752", type: bool, protocol: modbus, modbus_address: 3729, modbus_type: int16, device: "LINE1TE1", field: "ST", dev_type: "TE", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3753", address: "3753", type: bool, protocol: modbus, modbus_address: 3731, modbus_type: int16, device: "LINE1TE2", field: "ST", dev_type: "TE", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3754", address: "3754", type: float, protocol: modbus, modbus_address: 3733, modbus_type: float32, device: "LINE1QT1", field: "P_ERR", dev_type: "QT", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3755", address: "3755", type: bool, protocol: opcua, device: "LINE1VC14", field: "BLINK", dev_type: "VC", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3756", address: "3756", type: bool, protocol: opcua, device: "LINE1VC14", field: "NAMUR_ST", dev_type: "VC", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3757", address: "3757", type: bool, protocol: opcua, device: "LINE1VC14", field: "OPENED", dev_type: "VC", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3758", address: "3758", type: bool, protocol: opcua, device: "LINE1VC14", field: "CLOSED", dev_type: "VC", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3759", address: "3759", type: bool, protocol: opcua, device: "LINE1M1", field: "R", dev_type: "M", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3760", address: "3760", type: float, protocol: opcua, device: "LINE1M1", field: "FRQ", dev_type: "M", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3761", address: "3761", type: float, protocol: opcua, device: "LINE1M1", field: "RPM", dev_type: "M", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3762", address: "3762", type: float, protocol: opcua, device: "LINE1M1", field: "EST", dev_type: "M", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3763", address: "3763", type: float, protocol: opcua, device: "LINE1FS1", field: "P_DT", dev_type: "FS", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3764", address: "3764", type: bool, protocol: opcua, device: "M3", field: "ST", dev_type: "M", access: RW, noise_enabled: false, drift_enabled: false}
+    - {name: "3765", address: "3765", type: float, protocol: opcua, device: "M3", field: "M", dev_type: "M", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
+    - {name: "3766", address: "3766", type: float, protocol: opcua, device: "M3", field: "P_ON_TIME", dev_type: "M", access: RW, noise_enabled: false, drift_enabled: false}
+    - {name: "3767", address: "3767", type: float, protocol: opcua, device: "M3", field: "V", dev_type: "M", access: RO, generator: replay, noise_enabled: false, drift_enabled: false}
 
     # === PAC — ТРЕТИЙ ТИП КОНТРОЛЛЕРА (протокол driver-master, порт :10000) ===
     # Демо-приборы (channelId 9001..9007 — вне реальных 2471). Значения синтетические
