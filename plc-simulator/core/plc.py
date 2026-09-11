@@ -11,6 +11,7 @@ from typing import Dict, List
 from asyncua import Server, ua
 import asyncio
 import logging
+import math
 import os
 from pathlib import Path
 from .data_block import DataBlock
@@ -20,6 +21,22 @@ from .pac_server import PACServer
 from .archive_replay import ArchiveReplay
 
 logger = logging.getLogger(__name__)
+
+
+def _operator_touched(node_val, last_pushed) -> bool:
+    """Записал ли оператор в узел новое значение с прошлого нашего пуша.
+
+    Сравниваем текущее значение узла с тем, что мы туда положили сами, с допуском
+    на округление до float32 (иначе честный round-trip архивного значения выглядел
+    бы как «оператор перебил»). last_pushed=None — мы ещё ничего не писали."""
+    if last_pushed is None:
+        return False
+    try:
+        return not math.isclose(float(node_val), float(last_pushed),
+                                rel_tol=1e-4, abs_tol=1e-6)
+    except (TypeError, ValueError):
+        return node_val != last_pushed
+
 
 class PLCSimulator:
     """Главный класс симулятора контроллера с поддержкой OPC UA, Modbus TCP и PAC (driver-master)"""
@@ -407,12 +424,36 @@ class PLCSimulator:
                         
                         if hasattr(tag, 'opcua_node') and tag.opcua_node:
                             try:
-                                # RW-теги (клапаны, насос, мотор) управляются оператором
-                                # через шлюз: НЕ затираем их значением генератора, а читаем
-                                # узел обратно — иначе записанная команда жила бы 0.5с.
+                                # RW-теги управляются оператором через шлюз: НЕ затираем
+                                # их значением генератора, а читаем узел обратно — иначе
+                                # записанная команда жила бы 0.5с.
                                 is_rw = getattr(getattr(tag, 'access', None), 'value', None) == "RW"
                                 if is_rw:
-                                    tag.value = await tag.opcua_node.read_value()
+                                    node_val = await tag.opcua_node.read_value()
+                                    has_source = getattr(tag, 'generator', None) is not None
+                                    if not has_source:
+                                        # Чистый актуатор (клапан/мотор) — значение
+                                        # целиком за оператором, источника данных нет.
+                                        tag.value = node_val
+                                    elif tag._operator_override or _operator_touched(node_val, tag._last_pushed):
+                                        # Оператор перебил значение — защёлкиваемся на
+                                        # ручном и держим его, архив больше не пишем.
+                                        tag._operator_override = True
+                                        tag.value = node_val
+                                    elif hasattr(tag, 'opcua_variant_type'):
+                                        # Оператор пока не вмешивался — ведём тег от
+                                        # архива/генератора, узел остаётся writable
+                                        # (вариант B: живые данные + перебить записью).
+                                        corrected_value = self._convert_to_correct_type(
+                                            tag.value,
+                                            tag.opcua_variant_type
+                                        )
+                                        await tag.opcua_node.write_value(ua.Variant(
+                                            corrected_value,
+                                            tag.opcua_variant_type
+                                        ))
+                                        tag._last_pushed = corrected_value
+                                        update_count += 1
                                 elif hasattr(tag, 'opcua_variant_type'):
                                     corrected_value = self._convert_to_correct_type(
                                         tag.value,
