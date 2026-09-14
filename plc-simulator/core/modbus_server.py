@@ -74,10 +74,27 @@ class ModbusServer:
                 reg2 = int.from_bytes(packed[2:4], 'little')
                 # Записываем в holding registers (тип 3)
                 self.context[0].setValues(3, address, [reg1, reg2])
+            elif data_type == "int32":
+                raw = int(value) & 0xFFFFFFFF
+                self.context[0].setValues(3, address, [raw & 0xFFFF, (raw >> 16) & 0xFFFF])
             else:
-                self.context[0].setValues(3, address, [int(value)])
+                self.context[0].setValues(3, address, [int(value) & 0xFFFF])
         except Exception as e:
             logger.error(f"Failed to update Modbus register {address}: {e}")
+
+    def read_registers(self, address: int, count: int = 1):
+        """Прочитать holding-регистры из датастора.
+
+        Нужно для обратного чтения: шлюз пишет команду прямо в датастор сервера,
+        и без этого метода симулятор затёр бы её на следующем цикле опроса.
+        """
+        if not self.context:
+            return None
+        try:
+            return self.context[0].getValues(3, address, count)
+        except Exception as e:
+            logger.error(f"Failed to read Modbus register {address}: {e}")
+            return None
 
     def stop(self):
         """Остановка сервера"""

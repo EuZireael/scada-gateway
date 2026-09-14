@@ -78,4 +78,19 @@ class ModbusBatchReaderTest {
         assertNull(out.get(0).value());
         assertNull(out.get(1).value());
     }
+
+    @Test
+    @DisplayName("INT32: регистр выше 0x8000 разворачивается в отрицательное")
+    void decodes_signed_int() {
+        ModbusBatchReader reader = new ModbusBatchReader(modbus);
+        // Оператор записал −5: в регистр легло 0xFFFB. Без разворота вернулось бы 65531.
+        List<TagEntity> tags = List.of(tag(40001, "INT32"), tag(40002, "INT32"));
+        when(modbus.readHoldingRegisters("h", 502, 0, 2, 1))
+                .thenReturn(new int[]{0xFFFB, 555});
+
+        List<ModbusBatchReader.Reading> out = reader.read("h", 502, 1, tags);
+
+        assertEquals(-5, out.get(0).value());
+        assertEquals(555, out.get(1).value());   // положительные не трогаем
+    }
 }
