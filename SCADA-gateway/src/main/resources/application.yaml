@@ -28,9 +28,9 @@ spring:
         size: 3
   
   datasource:
-    url: jdbc:postgresql://localhost:5433/scada_db
-    username: scada_user
-    password: scada_password
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/scada_db}
+    username: ${DB_USERNAME:scada_user}
+    password: ${DB_PASSWORD:scada_password}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10

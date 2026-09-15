@@ -43,6 +43,10 @@ updates:
       # asyncua 2.x — мажор OPC UA сервера/клиента, ломает симулятор (нужна миграция).
       - dependency-name: "asyncua"
         versions: [">=2"]
+      # numpy 2.5+ требует Python >=3.12 (мы держим 3.11 — см. игнор Python выше и
+      # баг asyncua/issubclass в Dockerfile). PR #75 падал на pip install по этой причине.
+      - dependency-name: "numpy"
+        versions: [">=2.5"]
 
   # ---- GitHub Actions: версии экшенов в workflow ----
   - package-ecosystem: "github-actions"
