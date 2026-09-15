@@ -119,11 +119,17 @@ public class CommandConsumer {
     private boolean isDuplicate(String commandId) {
         if (commandId == null || commandId.isBlank()) return false;
         long now = System.currentTimeMillis();
-        Long prev = recentCommands.get(commandId);
-        if (prev != null && now - prev < DEDUP_TTL_MS) {
-            return true;
+        // get()+put() должны быть одной атомарной операцией — иначе два потока
+        // с одним commandId (Kafka at-least-once + параллельные consumer-потоки)
+        // могут оба пройти проверку до того, как кто-то из них запишет now.
+        // synchronized(recentCommands) — это и есть мьютекс Collections.synchronizedMap.
+        synchronized (recentCommands) {
+            Long prev = recentCommands.get(commandId);
+            if (prev != null && now - prev < DEDUP_TTL_MS) {
+                return true;
+            }
+            recentCommands.put(commandId, now);
+            return false;
         }
-        recentCommands.put(commandId, now);
-        return false;
     }
 }
