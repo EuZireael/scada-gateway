@@ -137,7 +137,7 @@ flowchart TB
 | Конфигурация | `ConfigurationService` | Читает `application.yaml`, делает upsert контроллеров и 2471 тега в БД (ключ — `nodeId`), удаляет устаревшие. |
 | OPC UA клиент | `OpcUaClientServiceDB` | Опрос по потоку на контроллер, чтение типизированных узлов, оценка связи по циклу, супервизор reconnect. |
 | Modbus клиент | `ModbusClientService` | Чтение holding-регистров (`float32` little-endian, `int16`), пул соединений с backoff. |
-| PAC клиент | `PacClientService` | Опрос PAC-контроллеров (`driver-master`): TCP + `zlib(Lua)`, исполнение присланного Lua через LuaJ, чтение значений из таблицы `tags` по `channelId`, пул соединений. |
+| PAC клиент | `PacClientService` | Опрос PAC-контроллеров (`driver-master`): TCP + `zlib(Lua)`, исполнение присланного Lua через LuaJ (без io/os/luajava), чтение значений из снимка `t[deviceName][fieldName]`, пул соединений. |
 | Алармы | `evaluateAlarms()` | Edge-триггер по `minValue`/`maxValue`, гистерезис (deadband 2 %), severity MINOR/MAJOR/CRITICAL. |
 | Журнал | `EventLogService` | Пишет в `event_log`: соединения, смена качества, алармы, системные события. |
 | Продюсеры | `TelemetryProducer`, `AlarmProducer`, `EventProducer` | Сериализация DTO и отправка в топики Kafka. |
@@ -202,12 +202,22 @@ flowchart LR
 (как `struct.pack('<f')`), `BOOLEAN`/`INT16` = 1 регистр. Адресация `40001 → 0`.
 
 **PAC (driver-master, Savushkin/ptusa) — третий протокол.** Реальные PAC-контроллеры завода
-говорят по протоколу `driver-master` поверх TCP (порт 10000): кадр `'s'`+ServiceID+pidx+BE16-len,
-тело ответа — `zlib(Lua-скрипт)`. Шлюз (`PacClientService`) исполняет присланный Lua через **LuaJ**
-и читает значения из таблицы `tags` по `channelId`; команды оператора — `EXEC_DEVICE_COMMAND` с
-Lua `set_cmd`. Опрашивается тем же конвейером, что OPC UA/Modbus. В стенде это отдельный
-**демо-контроллер PAC** (`pac://${SIM_HOST}:10000`, 7 синтетических тегов `channelId 9001–9007`) —
-сверх 2471 архивного канала; сим поднимает PAC-сервер в том же процессе.
+говорят по протоколу `driver-master` поверх TCP (порт 10000): после подключения PAC шлёт
+приветствие `PAC accept`, дальше кадры `'s'`+ServiceID+pidx+BE16-len, тело ответа —
+`zlib(Lua-скрипт)`, статус успеха 12. Шлюз (`PacClientService`) исполняет присланный Lua через
+**LuaJ** в урезанном стейте и берёт значение из снимка `GET_DEVICES_STATES` по имени в ПЛК:
+
+```lua
+t={ LINE1V0={M=0, ST=1}, LINE1M1={M=0, ST=0, FRQ=12.5, RPM=750, ...}, ... }
+t.OBJECT1={CMD=0, CUR_REC='Танк №1', RT_PAR_F={0, 0, 1, ...}, PAR_MAIN={1, 0.20, ...}}
+```
+
+Канал = `t[deviceName][fieldName]`; поле-массив `RT_PAR_F[12]` — Lua-индекс с 1, хвост после `]`
+(`PAR_MAIN[1].P_CZAD_S`) — подпись канала. `channelId` контроллер не знает. Команды оператора —
+`EXEC_DEVICE_COMMAND` с Lua `__<device>:set_cmd('<field>', 1, <значение>)`; PAC отвечает кодом
+результата (LE16: 0 — применено, иначе ошибка → `FAILED_WRITE`). Формат сверен с эмулятором ptusa
+2026.4.2.1 (прошивка под ПК с проектом станции BN1-МСА1, `tools/ptusa_emulator.sh`). В стенде PAC
+отдаёт симулятор (`pac://${SIM_HOST}:10000`, приборы первой линии) в том же формате.
 
 ---
 
