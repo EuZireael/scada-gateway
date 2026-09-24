@@ -1,10 +1,10 @@
 """
 PAC-контроллер симулятора — сервер протокола driver-master (Savushkin/ptusa).
 
-Третий тип контроллера рядом с OPC UA и Modbus. Говорит на «родном» протоколе PAC
-(исходник-оригинал — папка driver-master/ в корне репозитория, C++): TCP, кадр
-`'s' + ServiceID + FrameType + pidx + BE16-длина + payload`, тело ОТВЕТА = zlib(Lua).
-Значение тега передаётся как исполняемый Lua-скрипт — ровно как у настоящего PAC.
+Третий тип контроллера рядом с OPC UA и Modbus. Говорит на «родном» протоколе PAC так,
+как его видно у эмулятора ptusa 2026.4.2.1 (сборка ptusa_main под ПК, проект BN1-МСА1):
+после accept — приветствие `PAC accept`, дальше кадры `'s' + ServiceID + FrameType +
+pidx + BE16-длина + payload`, тело ОТВЕТА = zlib(Lua), статус успеха 12.
 
 Поддерживаем версию протокола 104 (zlib + UTF-8) — текущую у реальных PAC; QuickLZ
 (легаси v102) намеренно не тащим. Сервер держит СНИМОК значений тегов (его обновляет
@@ -14,10 +14,11 @@ daemon-потоке (ThreadingTCPServer), как Modbus-сервер.
 Реализованные команды (device_communicator::CMD):
   GET_INFO_ON_CONNECT(10)  — версия протокола, имя PAC, CRC параметров (handshake);
   GET_DEVICES(100)         — объектная модель (устройства→поля);
-  GET_DEVICES_STATES(101)  — текущие значения всех тегов (основной опрос);
-  EXEC_DEVICE_COMMAND(102) — запись: Lua-команда set_cmd применяется к RW-тегу;
+  GET_DEVICES_STATES(101)  — снимок по приборам: t={LINE1V0={M=0, ST=1}, ...} (основной опрос);
+  EXEC_DEVICE_COMMAND(102) — запись: Lua-команда set_cmd применяется к RW-тегу, в ответ
+                             код результата LE16 (0 — применено, 1 — нет такого RW-поля);
   GET_PAC_ERRORS(103)      — заглушка «нет ошибок».
-Остальное → статус ошибки (7).
+Остальное — пустой ответ со статусом успеха, как у ptusa.
 """
 import logging
 import re
@@ -38,11 +39,20 @@ CMD_GET_DEVICES_STATES = 101
 CMD_EXEC_DEVICE_COMMAND = 102
 CMD_GET_PAC_ERRORS = 103
 
+BANNER = b"PAC accept"     # приветствие ptusa сразу после accept, до первого кадра.
 NET_ID = ord('s')          # магический байт кадра (заголовок[0]).
-STATUS_OK = 0
+STATUS_OK = 12             # так помечает успешный ответ ptusa.
 STATUS_ERROR = 7           # драйвер трактует ответ[1] == 7 как ошибку.
 REQUEST_HEADER_LEN = 6     # 's', ServiceID, FrameType, pidx, lenHi, lenLo.
 MAX_BODY = 0xFFFF          # длина ответа — 2 байта → сжатое тело ≤ 65535 байт.
+
+# Код результата EXEC_DEVICE_COMMAND (LE16), как у ptusa: 0 — применено, 1 — нет.
+EXEC_APPLIED = struct.pack("<H", 0)
+EXEC_FAILED = struct.pack("<H", 1)
+
+# Поле-массив канала: RT_PAR_F[12] или PAR_MAIN[1].P_CZAD_S (хвост — подпись канала).
+_ARRAY_FIELD_RE = re.compile(r"^(?P<name>[^\[\]]+)\[(?P<idx>\d+)\]")
+_LUA_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # Разбор Lua-команды записи: `__1V1:set_cmd('ST', 1, 1)` или `..., 'value')`.
 # Ведущие подчёркивания (у имён с цифры) съедаются, dev='1V1', field='ST', val='1'.
@@ -61,15 +71,26 @@ def _recvall(sock, n):
     return bytes(buf)
 
 
-def _lua_number(value):
-    """Значение тега → Lua-число. bool→1/0 (в протоколе это T_NUMBER), float→компактно."""
+def _lua_value(value):
+    """Значение тега → Lua-литерал. bool→1/0 (в протоколе это T_NUMBER), float→компактно,
+    строка (рецепт, список программ) → в кавычках, как CUR_REC='…' у ptusa."""
     if isinstance(value, bool):
         return "1" if value else "0"
     if isinstance(value, float):
         return f"{value:.6g}"
     if isinstance(value, int):
         return str(value)
-    return _lua_number(float(value))
+    if isinstance(value, str):
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        return f"'{escaped}'"
+    return _lua_value(float(value))
+
+
+def _lua_key(name):
+    """Ключ Lua-таблицы: идентификатор как есть (LINE1V0), иначе ["1V1"]."""
+    if _LUA_NAME_RE.match(name):
+        return name
+    return '["' + name.replace("\\", "\\\\").replace('"', '\\"') + '"]'
 
 
 def _parse_scalar(text):
@@ -93,6 +114,7 @@ class _Handler(socketserver.BaseRequestHandler):
         peer = self.client_address
         logger.info(f"PAC: драйвер подключился {peer}")
         try:
+            sock.sendall(BANNER)
             while True:
                 header = _recvall(sock, REQUEST_HEADER_LEN)
                 if header is None:
@@ -187,18 +209,18 @@ class PACServer:
         if cmd == CMD_GET_DEVICES_STATES:
             return STATUS_OK, self._build_states()
         if cmd == CMD_EXEC_DEVICE_COMMAND:
-            self._apply_command(payload[1:])
-            return STATUS_OK, b"ok"          # тело для записи драйверу не важно
+            return STATUS_OK, EXEC_APPLIED if self._apply_command(payload[1:]) else EXEC_FAILED
         if cmd == CMD_GET_PAC_ERRORS:
             return STATUS_OK, b"errors={}\n"  # заглушка: ошибок нет
+        # ptusa на незнакомую команду отвечает пустым телом со статусом успеха.
         logger.warning(f"PAC: неизвестная команда {cmd}")
-        return STATUS_ERROR, b""
+        return STATUS_OK, b""
 
     def _build_info(self):
         """CMD_GET_INFO_ON_CONNECT: версия протокола, имя PAC, CRC (без префикса request_id)."""
-        lua = (f"protocol_version={PROTOCOL_VERSION}\n"
-               f"PAC_name='{self.pac_name}'\n"
-               f"params_CRC={self.params_crc}\n")
+        name = self.pac_name.replace("\\", "\\\\").replace('"', '\\"')
+        lua = (f'protocol_version = {PROTOCOL_VERSION}; PAC_name = "{name}"; '
+               f"is_reset_params = 0;params_CRC={self.params_crc};\n")
         return lua.encode("utf-8")
 
     def _with_request_id(self, lua_bytes):
@@ -219,22 +241,40 @@ class PACServer:
         return self._with_request_id("".join(parts).encode("utf-8"))
 
     def _build_states(self):
-        """CMD_GET_DEVICES_STATES: текущие значения — tags['<node.id>']=<число>."""
+        """CMD_GET_DEVICES_STATES: снимок по приборам, как device_manager::save_device у ptusa:
+        t={ LINE1V0={M=0, ST=1}, OBJECT1={CMD=0, RT_PAR_F={[12]=0.5}}, ... }. Канал читают
+        как t[прибор][поле]; поле-массив RT_PAR_F[12] уходит элементом таблицы RT_PAR_F."""
         with self._lock:
             values = dict(self._values)
-        parts = ["tags={}\n"]
-        for node_id, value in values.items():
-            parts.append(f"tags['{node_id}']={_lua_number(value)}\n")
+            devices = list(self._devices)
+        parts = ["t=\n\t{\n"]
+        for d in devices:
+            fields, arrays = [], {}
+            for f in d["fields"]:
+                if f["node_id"] not in values:
+                    continue
+                value = values[f["node_id"]]
+                m = _ARRAY_FIELD_RE.match(f["field"])
+                if m:
+                    arrays.setdefault(m.group("name"), {})[int(m.group("idx"))] = value
+                else:
+                    fields.append(f"{_lua_key(f['field'])}={_lua_value(value)}")
+            for name, items in arrays.items():
+                inner = ", ".join(f"[{i}]={_lua_value(items[i])}" for i in sorted(items))
+                fields.append(f"{_lua_key(name)}={{{inner}}}")
+            if fields:
+                parts.append(f"\t{_lua_key(d['device'])}={{{', '.join(fields)}}},\n")
+        parts.append("\t}\n")
         return self._with_request_id("".join(parts).encode("utf-8"))
 
     def _apply_command(self, raw):
-        """CMD_EXEC_DEVICE_COMMAND: разобрать set_cmd и применить к RW-тегу (best-effort)."""
+        """CMD_EXEC_DEVICE_COMMAND: разобрать set_cmd и применить к RW-тегу.
+        True — применено; False — команда не распознана или такого RW-поля нет."""
         text = raw.decode("utf-8", errors="replace")
         m = _SET_CMD_RE.search(text)
         if not m:
             logger.info(f"PAC: команда записи не распознана: {text!r}")
-            return
+            return False
         dev, field, val = m.group("dev"), m.group("field"), _parse_scalar(m.group("val"))
         logger.info(f"PAC: запись {dev}.{field} = {val}")
-        if self.on_write:
-            self.on_write(dev, field, val)
+        return bool(self.on_write and self.on_write(dev, field, val))

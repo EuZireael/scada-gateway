@@ -430,15 +430,17 @@ class PLCSimulator:
         self.pac_server.update_snapshot(snapshot)
 
     def _pac_write(self, device, field, value):
-        """Команда записи драйвера (EXEC_DEVICE_COMMAND) -> установить RW-тег device.field."""
+        """Команда записи драйвера (EXEC_DEVICE_COMMAND) -> установить RW-тег device.field.
+        True — записано; False — такого RW-тега нет (PAC ответит кодом ошибки)."""
         for tag in self._pac_tags():
             if (getattr(tag, 'device', None) == device
                     and getattr(tag, 'field', None) == field
                     and getattr(getattr(tag, 'access', None), 'value', None) == "RW"):
                 tag.value = value
                 tag._operator_override = True   # защёлкиваемся, см. apply_replay
-                return
+                return True
         logger.warning(f"PAC: RW-тег {device}.{field} не найден — запись отброшена")
+        return False
 
     def apply_replay(self):
         """Подставить в теги текущие значения из архива (replay)."""

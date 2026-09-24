@@ -2371,9 +2371,9 @@ opcua:
     # В dev-стеке PAC отдаёт СИМУЛЯТОР (plc-simulator/config/replay_config.yaml, :10000).
     #   endpoint  — pac://host:port (порт по умолчанию 10000);
     #   nodeId    — синтетический "pac:<id>" (OPC UA-узла у PAC нет, поле обязательное);
-    #   channelId — КЛЮЧ в Lua-таблице tags, что отдаёт PAC (= node.id сима) + Kafka tagId;
-    #   deviceName/fieldName — для команд записи (__<device>:set_cmd('<field>',1,val)).
-    # channelId 9001..9007 — демо-приборы (вне реальных 2471); под реальные PAC заменить.
+    #   channelId — node.id базы каналов; контроллеру он неизвестен;
+    #   deviceName/fieldName — имя в ПЛК: значение = t[device][field] из снимка
+    #     GET_DEVICES_STATES, запись = __<device>:set_cmd('<field>',1,val).
     # ========================================================================
     - id: pac-demo-001
       name: "PAC Savushkin"

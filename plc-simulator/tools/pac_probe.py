@@ -7,6 +7,7 @@
 
     python3 tools/pac_probe.py [host] [port]      # по умолчанию localhost:10000
 
+После connect PAC шлёт приветствие b'PAC accept' (10 байт), дальше кадры:
 Кадр запроса : 's' ServiceID FrameType pidx lenHi lenLo <payload>   (заголовок 6 байт)
 Кадр ответа  : 's' status pidx lenHi lenLo <zlib(body)>             (заголовок 5 байт)
 Тело devices/states после распаковки = [2 байта request_id LE] + Lua-текст.
@@ -20,6 +21,7 @@ import zlib
 CMD_GET_INFO_ON_CONNECT = 10
 CMD_GET_DEVICES = 100
 CMD_GET_DEVICES_STATES = 101
+BANNER = b"PAC accept"
 NET_ID = ord('s')
 SERVICE_ID = 1
 FRAME_SINGLE = 1
@@ -31,6 +33,9 @@ class PacProbe:
     def __init__(self, host, port):
         self.sock = socket.create_connection((host, port), timeout=3)
         self.pidx = 0
+        banner = self._recvall(len(BANNER))
+        if banner != BANNER:
+            raise IOError(f"нет приветствия PAC: {banner!r}")
 
     def _recvall(self, n):
         buf = bytearray()
@@ -80,10 +85,10 @@ class PacProbe:
         self.sock.close()
 
 
-def parse_tags(lua):
-    """Наивный разбор tags['id']=value из Lua (для наглядности)."""
-    return {m.group(1): m.group(2)
-            for m in re.finditer(r"tags\['([^']+)'\]=([^\n]+)", lua)}
+def parse_devices(lua):
+    """Наивный разбор снимка t={ ПРИБОР={ПОЛЕ=знач, ...}, ... } (для наглядности)."""
+    return {m.group(1).strip('[]"'): m.group(2)
+            for m in re.finditer(r'^\t([A-Za-z_][\w]*|\["[^"]+"\])=\{(.*)\},?$', lua, re.M)}
 
 
 def main():
@@ -104,9 +109,9 @@ def main():
     print(f"--- GET_DEVICES_STATES (request_id={rid}) ---")
     print(states)
 
-    print("--- разобранные значения тегов ---")
-    for node_id, value in parse_tags(states).items():
-        print(f"  {node_id} = {value}")
+    print("--- разобранные приборы ---")
+    for device, fields in parse_devices(states).items():
+        print(f"  {device}: {fields}")
 
     probe.close()
 

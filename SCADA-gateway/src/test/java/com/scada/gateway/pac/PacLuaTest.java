@@ -5,38 +5,100 @@ import org.luaj.vm2.Globals;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Извлечение значений тегов из Lua-ответа PAC (как это делает драйвер через свой Lua). */
+/** Извлечение значений из Lua-снимка PAC (как это делает драйвер через свой Lua). */
 class PacLuaTest {
 
-    @Test
-    void readValues_byDataType() {
-        Globals g = PacLua.newState();
-        PacLua.exec(g, "tags={}\ntags['9001']=1\ntags['9002']=22.5\ntags['9006']=0\n");
+    /** Фрагмент ответа GET_DEVICES_STATES эмулятора ptusa 2026.4.2.1 (проект BN1-МСА1), значения подправлены. */
+    private static final String SNAPSHOT = """
+            t=
+            \t{
+            \tLINE1V0={M=0, ST=1},
+            \tLINE1M1={M=0, ST=0, V=0, R=0, FRQ=12.5, RPM=750, EST=0, AMP=0.0, MAX_FRQ=0.0, P_ON_TIME=1000},
+            \t}
+            t.OBJECT1 = t.OBJECT1 or {}
+            t.OBJECT1=
+            \t{
+            \tCMD=0,
+            \tCUR_REC='Танк сырого молока №1',
+            \tRT_PAR_F=
+            \t\t{
+            \t\t0, 0, 0, 0, 0, 0, 0.98, 0, 0, 0, 0, 1,\s
+            \t\t},
+            \tPAR_MAIN=
+            \t\t{
+            \t\t1, 0.20, 0.15,\s
+            \t\t},
+            \t}
+            t.SYSTEM =
+            \t{
+            \tP_V_OFF_DELAY_TIME=1000,
+            \t}
+            """;
 
-        assertEquals(Boolean.TRUE, PacLua.read(g, "9001", "BOOLEAN"));
-        assertEquals(Boolean.FALSE, PacLua.read(g, "9006", "BOOLEAN"));
-        assertEquals(22.5, (Double) PacLua.read(g, "9002", "FLOAT"), 1e-9);
+    private static Globals snapshot() {
+        Globals g = PacLua.newState();
+        PacLua.exec(g, SNAPSHOT);
+        return g;
+    }
+
+    @Test
+    void readsDeviceFieldsByDataType() {
+        Globals g = snapshot();
+        assertEquals(1L, PacLua.read(g, "LINE1V0", "ST", "INT32"));
+        assertEquals(750L, PacLua.read(g, "LINE1M1", "RPM", "INT32"));
+        assertEquals(12.5, (Double) PacLua.read(g, "LINE1M1", "FRQ", "FLOAT"), 1e-9);
+        assertEquals(Boolean.TRUE, PacLua.read(g, "LINE1V0", "ST", "BOOLEAN"));
+        assertEquals(1000L, PacLua.read(g, "SYSTEM", "P_V_OFF_DELAY_TIME", "INT32"));
+    }
+
+    @Test
+    void readsArrayElementsByLuaIndex() {
+        Globals g = snapshot();
+        assertEquals(0.98, (Double) PacLua.read(g, "OBJECT1", "RT_PAR_F[7]", "FLOAT"), 1e-9);
+        assertEquals(1.0, (Double) PacLua.read(g, "OBJECT1", "RT_PAR_F[12]", "FLOAT"), 1e-9);
+        // Хвост после ] — подпись канала в базе, а не часть адреса в ПЛК.
+        assertEquals(0.20, (Double) PacLua.read(g, "OBJECT1", "PAR_MAIN[2].P_CMIN_S", "FLOAT"), 1e-9);
+    }
+
+    @Test
+    void readsStrings() {
+        assertEquals("Танк сырого молока №1", PacLua.read(snapshot(), "OBJECT1", "CUR_REC", "STRING"));
     }
 
     @Test
     void intTruncatesToLong() {
-        Globals g = PacLua.newState();
-        PacLua.exec(g, "tags={}\ntags['5']=1497.7\n");
-        assertEquals(1497L, PacLua.read(g, "5", "INT"));
+        assertEquals(12L, PacLua.read(snapshot(), "LINE1M1", "FRQ", "INT"));
     }
 
     @Test
-    void missingKeyOrTable_null() {
+    void missingOrUnreadable_null() {
         Globals g = PacLua.newState();
-        assertNull(PacLua.read(g, "1", "FLOAT"), "нет таблицы tags → null");
-        PacLua.exec(g, "tags={}\n");
-        assertNull(PacLua.read(g, "9999", "FLOAT"), "нет ключа → null");
+        assertNull(PacLua.read(g, "LINE1V0", "ST", "INT32"), "нет снимка t → null");
+
+        g = snapshot();
+        assertNull(PacLua.read(g, "LINE9V9", "ST", "INT32"), "нет прибора → null");
+        assertNull(PacLua.read(g, "LINE1V0", "V", "FLOAT"), "нет поля → null");
+        assertNull(PacLua.read(g, "OBJECT1", "RT_PAR_F[99]", "FLOAT"), "нет элемента массива → null");
+        assertNull(PacLua.read(g, "OBJECT1", "RT_PAR_F[x]", "FLOAT"), "кривой индекс → null");
+        assertNull(PacLua.read(g, "OBJECT1", "CUR_REC", "FLOAT"), "строка в числовом теге → null");
+        assertNull(PacLua.read(g, null, "ST", "INT32"), "тег без deviceName → null");
+    }
+
+    @Test
+    void stateHasNoHostAccess() {
+        Globals g = PacLua.newState();
+        for (String lib : new String[]{"os", "io", "luajava", "require", "package", "dofile", "loadfile"}) {
+            assertTrue(g.get(lib).isnil(), lib + " не должен быть доступен скрипту контроллера");
+        }
+        // Вычисления, которые нужны снимку, остаются.
+        PacLua.exec(g, "t = t or {}\nt.X = {V = math.max(1, 2), S = string.upper('ok')}\n");
+        assertEquals(2.0, (Double) PacLua.read(g, "X", "V", "FLOAT"), 1e-9);
     }
 
     @Test
     void protocolVersion_fromInfo() {
         Globals g = PacLua.newState();
-        PacLua.exec(g, "protocol_version=104\nPAC_name='PAC_DEMO'\nparams_CRC=0\n");
+        PacLua.exec(g, "protocol_version = 104; PAC_name = \"BN1-МСА1\"; is_reset_params = 0;params_CRC=32634;\n");
         assertEquals(104, PacLua.protocolVersion(g));
     }
 
