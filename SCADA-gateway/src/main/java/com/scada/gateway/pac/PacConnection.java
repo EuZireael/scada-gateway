@@ -11,16 +11,19 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.zip.DataFormatException;
 
 /**
  * Одно TCP-соединение с PAC-контроллером (протокол driver-master). Держит сокет и свой
  * Lua-стейт: присланные контроллером Lua-ответы исполняются в стейте, значения тегов
- * читаются из таблицы {@code tags}. Запросы синхронные (запрос → ответ), поэтому методы
+ * читаются из снимка {@code t[прибор][поле]}. Запросы синхронные (запрос → ответ), поэтому методы
  * потокобезопасны через synchronized (как в оригинальном tcp_cmmctr с критической секцией).
  *
- * <p>Цикл: {@link #connect()} → {@link #handshake()} (версия/имя) → {@link #pollStates()}
- * (снимок всех состояний) → {@link #readValue} по каждому тегу. Запись — {@link #writeCommand}.
+ * <p>Цикл: {@link #connect()} (с приветствием PAC) → {@link #handshake()} (версия/имя) →
+ * {@link #pollStates()} (снимок всех состояний) → {@link #readValue} по каждому тегу.
+ * Запись — {@link #writeCommand}. Первый запрос нужно слать сразу: ptusa рвёт соединение,
+ * если после приветствия клиент молчит дольше ~300 мс.
  */
 public class PacConnection {
 
@@ -47,7 +50,7 @@ public class PacConnection {
         return socket != null && socket.isConnected() && !socket.isClosed();
     }
 
-    /** Открыть сокет и завести чистый Lua-стейт. */
+    /** Открыть сокет, принять приветствие PAC и завести чистый Lua-стейт. */
     public synchronized void connect() throws IOException {
         Socket s = new Socket();
         s.connect(new InetSocketAddress(host, port), timeoutMs);
@@ -59,6 +62,17 @@ public class PacConnection {
         this.lua = PacLua.newState();
         this.handshaked = false;
         this.pidx = 0;
+        // Без этого первые байты приветствия читались бы как заголовок ответа («PAC a»).
+        try {
+            byte[] banner = readN(PacProtocol.BANNER.length);
+            if (!Arrays.equals(banner, PacProtocol.BANNER)) {
+                throw new IOException("PAC: нет приветствия 'PAC accept', пришло "
+                        + new String(banner, StandardCharsets.US_ASCII));
+            }
+        } catch (IOException e) {
+            close();
+            throw e;
+        }
     }
 
     /** Закрыть соединение (тихо). */
@@ -91,15 +105,23 @@ public class PacConnection {
         PacLua.exec(lua, new String(body, off, body.length - off, StandardCharsets.UTF_8));
     }
 
-    /** Значение тега из таблицы tags по ключу (channelId), приведённое к dataType. */
-    public synchronized Object readValue(String key, String dataType) {
-        return lua == null ? null : PacLua.read(lua, key, dataType);
+    /** Значение поля прибора из снимка t[device][field], приведённое к dataType. */
+    public synchronized Object readValue(String device, String field, String dataType) {
+        return lua == null ? null : PacLua.read(lua, device, field, dataType);
     }
 
-    /** EXEC_DEVICE_COMMAND: команда записи в PAC как Lua-строка set_cmd (актуатор). */
+    /**
+     * EXEC_DEVICE_COMMAND: команда записи в PAC как Lua-строка set_cmd (актуатор). PAC
+     * отвечает кодом результата (LE16): 0 — применено, иначе скрипт команды не выполнился
+     * (например, нет такого прибора) — это ошибка записи, а не успех.
+     */
     public synchronized void writeCommand(String device, String field, Object value) throws IOException {
         String cmd = "__" + device + ":set_cmd('" + field + "', 1, " + PacLua.scalar(value) + ")";
-        request(PacProtocol.CMD_EXEC_DEVICE_COMMAND, cmd.getBytes(StandardCharsets.UTF_8));
+        byte[] result = request(PacProtocol.CMD_EXEC_DEVICE_COMMAND, cmd.getBytes(StandardCharsets.UTF_8));
+        int code = result.length >= 2 ? (result[0] & 0xFF) | ((result[1] & 0xFF) << 8) : 0;
+        if (code != 0) {
+            throw new IOException("PAC не выполнил команду " + device + "." + field + " (код " + code + ")");
+        }
     }
 
     // --------------------------------------------------------------- транспорт --

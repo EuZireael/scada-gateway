@@ -15,8 +15,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * обрыва — по образцу {@link com.scada.gateway.modbus.ModbusClientService}.
  *
  * <p>Модель протокола «читать всё разом»: один GET_DEVICES_STATES за цикл снимает
- * состояние ВСЕХ устройств контроллера, дальше значения тегов берутся из Lua-таблицы
- * tags по ключу (channelId). Поэтому {@link #read} делает один сетевой запрос на цикл.
+ * состояние ВСЕХ устройств контроллера, дальше значение тега берётся из Lua-снимка
+ * {@code t[deviceName][fieldName]} — имя в ПЛК, как у драйвера PAC_easy_drv. channelId
+ * контроллеру неизвестен. Поэтому {@link #read} делает один сетевой запрос на цикл.
  */
 @Service
 public class PacClientService {
@@ -37,7 +38,7 @@ public class PacClientService {
     public record Reading(TagEntity tag, Object value) {}
 
     /**
-     * Опросить PAC: один GET_DEVICES_STATES, затем значение каждого тега из tags.
+     * Опросить PAC: один GET_DEVICES_STATES, затем значение каждого тега из снимка t.
      * При обрыве соединение закрывается и пересоздаётся на следующем цикле; все теги
      * этого цикла получают value=null (quality=BAD на уровне цикла опроса).
      */
@@ -51,7 +52,7 @@ public class PacClientService {
                 if (!conn.isConnected()) conn.connect();
                 conn.pollStates();
                 for (TagEntity tag : tags) {
-                    out.add(new Reading(tag, conn.readValue(String.valueOf(tag.getChannelId()),
+                    out.add(new Reading(tag, conn.readValue(tag.getDeviceName(), tag.getFieldName(),
                             tag.getDataType())));
                 }
             }

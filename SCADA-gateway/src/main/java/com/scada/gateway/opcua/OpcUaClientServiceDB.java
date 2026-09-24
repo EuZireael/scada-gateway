@@ -570,7 +570,7 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
      * (не Milo), соединение ленивое в {@link com.scada.gateway.pac.PacClientService}.
      * Особенность протокола — один GET_DEVICES_STATES снимает состояние ВСЕХ устройств
      * за раз, поэтому за цикл ровно один сетевой запрос, а значения тегов берутся из
-     * Lua-таблицы tags по channelId.
+     * Lua-снимка t по имени прибора и поля.
      */
     private void startPacPolling(ControllerEntity controller, ExecutorService executor, long gen) {
         String host = com.scada.gateway.pac.PacEndpoint.host(controller.getEndpoint());

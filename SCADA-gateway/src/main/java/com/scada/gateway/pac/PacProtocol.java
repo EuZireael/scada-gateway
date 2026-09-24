@@ -1,6 +1,7 @@
 package com.scada.gateway.pac;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
@@ -10,8 +11,10 @@ import java.util.zip.Inflater;
  * C++ в папке {@code driver-master/} (класс tcp_cmmctr). Поддерживаем версию 104
  * (zlib + UTF-8); QuickLZ (легаси v102) не реализуем.
  *
- * <p>Кадр ЗАПРОСА (6 байт заголовка): {@code 's', ServiceID, FrameSingle, pidx, lenHi, lenLo}
+ * <p>Сразу после подключения PAC шлёт приветствие {@link #BANNER}, дальше — кадры.
+ * Кадр ЗАПРОСА (6 байт заголовка): {@code 's', ServiceID, FrameSingle, pidx, lenHi, lenLo}
  * + payload. Кадр ОТВЕТА (5 байт заголовка): {@code 's', status, pidx, lenHi, lenLo} + zlib(body).
+ * Сверено с эмулятором ptusa 2026.4.2.1 (сборка ptusa_main под ПК, режим --no_io).
  */
 public final class PacProtocol {
 
@@ -22,10 +25,15 @@ public final class PacProtocol {
     /** Версия протокола: 104 = zlib + UTF-8 (текущая у реальных PAC). */
     public static final int PROTOCOL_VERSION = 104;
 
+    /** Приветствие, которое ptusa шлёт сразу после accept — до первого кадра. */
+    public static final byte[] BANNER = "PAC accept".getBytes(StandardCharsets.US_ASCII);
+
     public static final byte NET_ID = 's';          // магический байт кадра (заголовок[0]).
     public static final int SERVICE_ID = 1;          // PAC_CMMCTR_SERVICE_ID.
     public static final int FRAME_SINGLE = 1;        // тип кадра (одиночный).
-    public static final int STATUS_ERROR = 7;        // ответ[1] == 7 → ошибка на стороне PAC.
+    // ответ[1] == 7 → ошибка на стороне PAC. Успех ptusa помечает 12, но код успеха не
+    // проверяем: драйвер смотрит только на ошибку.
+    public static final int STATUS_ERROR = 7;
     public static final int REQUEST_HEADER_LEN = 6;
     public static final int RESPONSE_HEADER_LEN = 5;
 
