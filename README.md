@@ -38,6 +38,10 @@
 curl -s http://localhost:8888/actuator/health          # {"status":"UP"}
 ```
 
+Реальная станция — один контроллер ptusa по PAC; конфиг генерирует
+`tools/station_config.sh` из базы каналов и проекта ПЛК (`config/stations/BN1_MCA1.yaml`, запуск —
+`CONTROLLERS_CONFIG=file:… PAC_HOST=…`), подробности — SPECIFICATION §5.
+
 ## Архитектура
 
 ```
