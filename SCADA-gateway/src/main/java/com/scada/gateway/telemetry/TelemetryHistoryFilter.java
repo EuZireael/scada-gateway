@@ -4,6 +4,7 @@ import com.scada.gateway.model.entity.TagEntity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
@@ -29,7 +30,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *       ({@code max(deadband, |прежнее| · deadbandPercent / 100)}); при нулевой зоне — любое
  *       отличие. Нечисловые значения сравниваются на равенство.</li>
  * </ol>
- * Сравнение идёт с последним ЗАПИСАННЫМ значением, а не с предыдущим опросом: медленный дрейф
+ * Интервалы считаются по часам шлюза (момент получения), а не по метке источника: OPC UA не
+ * двигает метку, пока значение стоит (25.09.2026 у V1.ST она застыла на старте), и «пульс» по ней
+ * не наступил бы никогда. В строку истории метка источника идёт как раньше.
+ *
+ * <p>Сравнение идёт с последним ЗАПИСАННЫМ значением, а не с предыдущим опросом: медленный дрейф
  * внутри зоны нечувствительности не теряется, а накапливается до порога. Изменение, отрезанное
  * {@code minInterval}, тоже не теряется — оно запишется первым же опросом после окна, если
  * значение так и не вернулось.
@@ -47,25 +52,38 @@ public class TelemetryHistoryFilter {
     private final long defaultMaxIntervalMs;
 
     private final Map<Long, Written> lastWritten = new ConcurrentHashMap<>();
+    private final Clock clock;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public TelemetryHistoryFilter(
             @Value("${gateway.history.deadband:0}") double defaultDeadband,
             @Value("${gateway.history.deadband-percent:0}") double defaultDeadbandPercent,
             @Value("${gateway.history.min-interval-ms:0}") long defaultMinIntervalMs,
             @Value("${gateway.history.max-interval-ms:600000}") long defaultMaxIntervalMs) {
+        this(defaultDeadband, defaultDeadbandPercent, defaultMinIntervalMs, defaultMaxIntervalMs, Clock.systemUTC());
+    }
+
+    /** Для тестов: часы, по которым считаются интервалы. */
+    public TelemetryHistoryFilter(double defaultDeadband, double defaultDeadbandPercent,
+                                  long defaultMinIntervalMs, long defaultMaxIntervalMs, Clock clock) {
+        this.clock = clock;
         this.defaultDeadband = defaultDeadband;
         this.defaultDeadbandPercent = defaultDeadbandPercent;
         this.defaultMinIntervalMs = defaultMinIntervalMs;
         this.defaultMaxIntervalMs = defaultMaxIntervalMs;
     }
 
-    /** true — точку писать; решение сразу запоминается как «записано». */
+    /**
+     * true — точку писать; решение сразу запоминается как «записано».
+     * {@code timestamp} — метка источника, для решения не используется (см. описание класса).
+     */
     public boolean shouldPersist(TagEntity tag, Object value, String quality, Instant timestamp) {
+        Instant now = clock.instant();
         boolean[] persist = {false};
         lastWritten.compute(tag.getId(), (id, last) -> {
-            if (last == null || decide(tag, last, value, quality, timestamp)) {
+            if (last == null || decide(tag, last, value, quality, now)) {
                 persist[0] = true;
-                return new Written(value, quality, timestamp);
+                return new Written(value, quality, now);
             }
             return last;
         });
