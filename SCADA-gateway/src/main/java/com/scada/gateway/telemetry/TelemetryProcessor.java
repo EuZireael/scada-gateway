@@ -39,6 +39,7 @@ public class TelemetryProcessor {
     private final TelemetryRepository telemetryRepository;
     private final EventLogService eventLog;
     private final AlarmEvaluator alarmEvaluator;
+    private final TelemetryHistoryFilter historyFilter;
     private final Counter telemetrySent;
 
     /** Считать ли пороги/алармы в шлюзе. По умолчанию false — алармы считает Monitor. */
@@ -61,7 +62,9 @@ public class TelemetryProcessor {
                               TelemetryRepository telemetryRepository,
                               EventLogService eventLog,
                               AlarmEvaluator alarmEvaluator,
+                              TelemetryHistoryFilter historyFilter,
                               MeterRegistry meterRegistry) {
+        this.historyFilter = historyFilter;
         this.telemetryProducer = telemetryProducer;
         this.telemetryRepository = telemetryRepository;
         this.eventLog = eventLog;
@@ -146,8 +149,9 @@ public class TelemetryProcessor {
             alarmEvaluator.evaluate(tag, ((Number) value).doubleValue());
         }
 
-        // Локальная история: копим в буфер цикла (batch != null ⇔ persist-telemetry=true).
-        if (batch != null) {
+        // Локальная история: копим в буфер цикла (batch != null ⇔ persist-telemetry=true),
+        // но только значимые точки — изменение, смена качества, «пульс» (TelemetryHistoryFilter).
+        if (batch != null && historyFilter.shouldPersist(tag, value, quality, timestamp)) {
             batch.add(buildTelemetry(tag, value, quality, timestamp));
         }
 

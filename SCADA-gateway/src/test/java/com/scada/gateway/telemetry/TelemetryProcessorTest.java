@@ -39,6 +39,7 @@ class TelemetryProcessorTest {
     @BeforeEach
     void setUp() {
         processor = new TelemetryProcessor(telemetryProducer, telemetryRepository, eventLog, alarmEvaluator,
+                new TelemetryHistoryFilter(0, 0, 0, 600_000),
                 new SimpleMeterRegistry());
     }
 

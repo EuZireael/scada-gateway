@@ -106,6 +106,10 @@ public class OpcUaConfig {
         // актуатор (клапан/мотор/DO), команду записи шлюз принимает. См. writeTag.
         private boolean writable = false;
 
+        // Фильтр локальной истории для этого тега (см. TelemetryHistoryFilter). Не задан —
+        // действуют умолчания gateway.history.*.
+        private HistoryConfig history;
+
         public String getNodeId() { return nodeId; }
         public void setNodeId(String nodeId) { this.nodeId = nodeId; }
 
@@ -162,6 +166,33 @@ public class OpcUaConfig {
 
         public boolean isWritable() { return writable; }
         public void setWritable(boolean writable) { this.writable = writable; }
+
+        public HistoryConfig getHistory() { return history; }
+        public void setHistory(HistoryConfig history) { this.history = history; }
+    }
+
+    /**
+     * Переопределение фильтра истории у тега:
+     * {@code history: {deadband: 0.5, deadbandPercent: 1, minIntervalMs: 60000, maxIntervalMs: 600000}}.
+     * Любое поле можно опустить — возьмётся умолчание {@code gateway.history.*}.
+     */
+    public static class HistoryConfig {
+        private Double deadband;
+        private Double deadbandPercent;
+        private Long minIntervalMs;
+        private Long maxIntervalMs;
+
+        public Double getDeadband() { return deadband; }
+        public void setDeadband(Double deadband) { this.deadband = deadband; }
+
+        public Double getDeadbandPercent() { return deadbandPercent; }
+        public void setDeadbandPercent(Double deadbandPercent) { this.deadbandPercent = deadbandPercent; }
+
+        public Long getMinIntervalMs() { return minIntervalMs; }
+        public void setMinIntervalMs(Long minIntervalMs) { this.minIntervalMs = minIntervalMs; }
+
+        public Long getMaxIntervalMs() { return maxIntervalMs; }
+        public void setMaxIntervalMs(Long maxIntervalMs) { this.maxIntervalMs = maxIntervalMs; }
     }
 
     /** Одно поле прибора внутри записи ИМЯ={поле=знач,…}: имя → канал базы + тип. */

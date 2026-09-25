@@ -107,6 +107,20 @@ public class TagEntity {
     @Column(name = "fields_json", columnDefinition = "text")
     private String fieldsJson;
 
+    // Фильтр локальной истории (TelemetryHistoryFilter): переопределения gateway.history.* для
+    // тега. Обёртки, а не примитивы: null = «взять умолчание», и колонка допускает NULL.
+    @Column(name = "history_deadband")
+    private Double historyDeadband;
+
+    @Column(name = "history_deadband_percent")
+    private Double historyDeadbandPercent;
+
+    @Column(name = "history_min_interval_ms")
+    private Long historyMinIntervalMs;
+
+    @Column(name = "history_max_interval_ms")
+    private Long historyMaxIntervalMs;
+
     // Доступ к записи — как у реального ПЛК: показание датчика (RO) изменить нельзя,
     // команду актуатора (RW: клапан/мотор/DO) — можно. false (по умолчанию) → шлюз
     // отклоняет команду записи (REJECTED_NOT_WRITABLE) ещё ДО похода в контроллер,
@@ -212,6 +226,18 @@ public class TagEntity {
 
     public String getFieldsJson() { return fieldsJson; }
     public void setFieldsJson(String fieldsJson) { this.fieldsJson = fieldsJson; }
+
+    public Double getHistoryDeadband() { return historyDeadband; }
+    public void setHistoryDeadband(Double historyDeadband) { this.historyDeadband = historyDeadband; }
+
+    public Double getHistoryDeadbandPercent() { return historyDeadbandPercent; }
+    public void setHistoryDeadbandPercent(Double historyDeadbandPercent) { this.historyDeadbandPercent = historyDeadbandPercent; }
+
+    public Long getHistoryMinIntervalMs() { return historyMinIntervalMs; }
+    public void setHistoryMinIntervalMs(Long historyMinIntervalMs) { this.historyMinIntervalMs = historyMinIntervalMs; }
+
+    public Long getHistoryMaxIntervalMs() { return historyMaxIntervalMs; }
+    public void setHistoryMaxIntervalMs(Long historyMaxIntervalMs) { this.historyMaxIntervalMs = historyMaxIntervalMs; }
 
     public boolean isWritable() { return writable; }
     public void setWritable(boolean writable) { this.writable = writable; }

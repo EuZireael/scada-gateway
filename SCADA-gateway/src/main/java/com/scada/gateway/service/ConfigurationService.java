@@ -131,6 +131,12 @@ public class ConfigurationService {
                 tag.setDeviceType(tagConfig.getDeviceType());
                 // Режим сырой записи прибора: карту полей сериализуем в JSON.
                 tag.setRecordDevice(tagConfig.isRecordDevice());
+                // Фильтр истории: поля, не заданные в YAML, остаются null → умолчания gateway.history.*.
+                OpcUaConfig.HistoryConfig history = tagConfig.getHistory();
+                tag.setHistoryDeadband(history == null ? null : history.getDeadband());
+                tag.setHistoryDeadbandPercent(history == null ? null : history.getDeadbandPercent());
+                tag.setHistoryMinIntervalMs(history == null ? null : history.getMinIntervalMs());
+                tag.setHistoryMaxIntervalMs(history == null ? null : history.getMaxIntervalMs());
                 if (tagConfig.getFields() != null) {
                     try {
                         tag.setFieldsJson(objectMapper.writeValueAsString(tagConfig.getFields()));
