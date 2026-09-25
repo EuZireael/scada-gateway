@@ -2,6 +2,7 @@ package com.scada.gateway.telemetry;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scada.gateway.alarm.AlarmEvaluator;
+import com.scada.gateway.ha.Leadership;
 import com.scada.gateway.kafka.producer.TelemetryProducer;
 import com.scada.gateway.model.entity.ControllerEntity;
 import com.scada.gateway.model.entity.TagEntity;
@@ -40,6 +41,8 @@ public class TelemetryProcessor {
     private final EventLogService eventLog;
     private final AlarmEvaluator alarmEvaluator;
     private final Counter telemetrySent;
+    /** Горячий резерв: историю в БД пишет только активный (иначе пара писала бы каждую точку дважды). */
+    private final Leadership leadership;
 
     /** Считать ли пороги/алармы в шлюзе. По умолчанию false — алармы считает Monitor. */
     @Value("${gateway.alarms.enabled:false}")
@@ -61,11 +64,13 @@ public class TelemetryProcessor {
                               TelemetryRepository telemetryRepository,
                               EventLogService eventLog,
                               AlarmEvaluator alarmEvaluator,
-                              MeterRegistry meterRegistry) {
+                              MeterRegistry meterRegistry,
+                              Leadership leadership) {
         this.telemetryProducer = telemetryProducer;
         this.telemetryRepository = telemetryRepository;
         this.eventLog = eventLog;
         this.alarmEvaluator = alarmEvaluator;
+        this.leadership = leadership;
         this.telemetrySent = meterRegistry.counter("scada.telemetry.sent.total");
     }
 
@@ -153,7 +158,8 @@ public class TelemetryProcessor {
 
         if (value != null) {
             telemetryProducer.sendTelemetry(tag, value, quality, timestamp);
-            telemetrySent.increment();
+            // Резервный экземпляр пары не публикует — и не считает (метрика = реально отправленное).
+            if (leadership.isActive()) telemetrySent.increment();
             // per-tag на каждый опрос — только debug (иначе поток INFO на 2471 тег/цикл).
             log.debug("📊 {} = {}", tag.getName(), value);
         } else {
@@ -162,7 +168,7 @@ public class TelemetryProcessor {
             // правок B2/C4). Состояние связи фиксирует markControllerDown на уровне цикла.
             if (sendBadFrames) {
                 telemetryProducer.sendTelemetry(tag, null, quality, timestamp);
-                telemetrySent.increment();
+                if (leadership.isActive()) telemetrySent.increment();
             }
             log.debug("⚠️ {} = NULL (quality: {})", tag.getName(), quality);
         }
@@ -189,6 +195,7 @@ public class TelemetryProcessor {
 
     /** Батч-запись точек цикла: saveAll = ОДНА транзакция вместо N отдельных коммитов. */
     public void flushTelemetry(List<TelemetryEntity> batch) {
+        if (!leadership.isActive()) return;
         try {
             telemetryRepository.saveAll(batch);
         } catch (Exception e) {

@@ -5,11 +5,16 @@ import com.scada.gateway.kafka.dto.CommandResultMessage;
 import com.scada.gateway.kafka.producer.CommandResultProducer;
 import com.scada.gateway.command.CommandOutcome;
 import com.scada.gateway.command.CommandService;
+import com.scada.gateway.command.CommandStatus;
 import com.scada.gateway.service.EventLogService;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -28,10 +33,26 @@ public class CommandConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(CommandConsumer.class);
 
+    /**
+     * Id контейнера консьюмера. Контейнер создаётся выключенным: включает его
+     * {@link com.scada.gateway.ha.CommandListenerSwitch}, когда экземпляр активный (у
+     * одиночного шлюза — сразу при старте).
+     */
+    public static final String LISTENER_ID = "scada-commands";
+
     private final CommandService commandService;
     private final CommandResultProducer resultProducer;
     private final EventLogService eventLogService;
     private final MeterRegistry meterRegistry;
+
+    /**
+     * Команды старше — не исполняются (REJECTED_EXPIRED). Возраст — по метке времени записи
+     * Kafka (часы монитора), поэтому с запасом на расхождение часов: 30 c по умолчанию при
+     * таймауте ожидания у монитора 5 c. Команды, пришедшие за время переключения пары
+     * (секунды), исполняются.
+     */
+    @Value("${gateway.commands.max-age-ms:30000}")
+    private long maxAgeMs = 30_000;
 
     // A7: окно недавних commandId для идемпотентности — Kafka at-least-once или двойная
     // доставка одной команды не должна писать в ПЛК дважды. Держим до DEDUP_MAX последних
@@ -61,11 +82,15 @@ public class CommandConsumer {
      * метрику по исходу и публикует результат обратно монитору + пишет событие в журнал.
      */
     @KafkaListener(
+            id = LISTENER_ID,
+            idIsGroup = false,
+            autoStartup = "false",
             topics = "${kafka.topics.commands:scada-commands}",
             groupId = "${spring.kafka.consumer.group-id:scada-gateway-group}",
             containerFactory = "commandKafkaListenerContainerFactory"
     )
-    public void onCommand(CommandMessage cmd) {
+    public void onCommand(@Payload CommandMessage cmd,
+                          @Header(name = KafkaHeaders.RECEIVED_TIMESTAMP, required = false) Long recordTimestampMs) {
         // Тег адресуется либо внутренним id (Monitor Srv), либо именем канала —
         // полным путём узла (scada-editor runtime). Имя самодостаточно: оно же
         // Kafka-key телеметрии, поэтому отправителю не нужно знать нумерацию шлюза.
@@ -85,9 +110,19 @@ public class CommandConsumer {
         log.info("← команда: tag={} ({}), value={}, by={}",
                 cmd.getTagName(), cmd.getTagId(), cmd.getValue(), cmd.getRequestedBy());
 
-        CommandOutcome outcome = hasId
-                ? commandService.writeTag(cmd.getTagId(), cmd.getValue(), cmd.getDataType())
-                : commandService.writeTagByName(cmd.getTagName(), cmd.getValue(), cmd.getDataType());
+        Long ageMs = ageMs(cmd, recordTimestampMs);
+        CommandOutcome outcome;
+        if (ageMs != null && ageMs > maxAgeMs) {
+            // Команда пролежала в топике, пока шлюз стоял: в ПЛК не отправляем.
+            outcome = new CommandOutcome(false, CommandStatus.REJECTED_EXPIRED,
+                    "Команда устарела: " + ageMs / 1000 + " c при пределе " + maxAgeMs / 1000 + " c", null);
+            log.warn("⌛ Команда {} по {} устарела ({} мс) — в ПЛК не отправлена",
+                    cmd.getCommandId(), cmd.getTagName(), ageMs);
+        } else {
+            outcome = hasId
+                    ? commandService.writeTag(cmd.getTagId(), cmd.getValue(), cmd.getDataType())
+                    : commandService.writeTagByName(cmd.getTagName(), cmd.getValue(), cmd.getDataType());
+        }
 
         // Метрика: сколько команд и с каким исходом (APPLIED/REJECTED_*/FAILED_*).
         meterRegistry.counter("scada.commands.total", "status", outcome.status.name()).increment();
@@ -113,6 +148,22 @@ public class CommandConsumer {
                 String.format("Команда %s = %s от %s: %s",
                         cmd.getTagName(), cmd.getValue(), cmd.getRequestedBy(), outcome.status),
                 details);
+    }
+
+    /**
+     * Возраст команды: по метке времени записи Kafka (её ставит продюсер монитора), иначе по
+     * полю timestamp команды. null — возраст неизвестен (такую команду исполняем).
+     */
+    public static Long ageMs(CommandMessage cmd, Long recordTimestampMs) {
+        long sent;
+        if (recordTimestampMs != null && recordTimestampMs > 0) {
+            sent = recordTimestampMs;
+        } else if (cmd.getTimestamp() != null) {
+            sent = cmd.getTimestamp().toEpochMilli();
+        } else {
+            return null;
+        }
+        return System.currentTimeMillis() - sent;
     }
 
     /** true, если commandId уже применялся в пределах TTL (дубль). Иначе запоминает его. */

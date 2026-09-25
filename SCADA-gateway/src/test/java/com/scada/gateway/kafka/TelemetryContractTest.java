@@ -3,6 +3,7 @@ package com.scada.gateway.kafka;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.scada.gateway.ha.Leadership;
 import com.scada.gateway.kafka.dto.TelemetryMessage;
 import com.scada.gateway.kafka.producer.TelemetryProducer;
 import com.scada.gateway.model.entity.TagEntity;
@@ -93,7 +94,8 @@ class TelemetryContractTest {
         when(kafka.send(anyString(), anyString(), any()))
                 .thenReturn(new CompletableFuture<SendResult<String, Object>>());
 
-        TelemetryProducer producer = new TelemetryProducer(kafka, "scada.tags", mock(EventLogService.class));
+        TelemetryProducer producer = new TelemetryProducer(kafka, "scada.tags", mock(EventLogService.class),
+                Leadership.ALWAYS_ACTIVE);
         // kafkaEnabled — @Value-поле, по умолчанию false (тогда метод — no-op). Включаем.
         ReflectionTestUtils.setField(producer, "kafkaEnabled", true);
 

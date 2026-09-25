@@ -1,5 +1,6 @@
 package com.scada.gateway.kafka.producer;
 
+import com.scada.gateway.ha.Leadership;
 import com.scada.gateway.kafka.dto.AlarmMessage;
 import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.service.EventLogService;
@@ -25,6 +26,8 @@ public class AlarmProducer {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final String alarmTopic;
     private final EventLogService eventLogService;
+    /** Горячий резерв: алармы в Kafka шлёт только активный экземпляр. */
+    private final Leadership leadership;
 
     @Value("${kafka.enabled:false}")
     private boolean kafkaEnabled;
@@ -35,10 +38,12 @@ public class AlarmProducer {
 
     public AlarmProducer(KafkaTemplate<String, Object> kafkaTemplate,
                          @Value("${kafka.topics.alarms}") String alarmTopic,
-                         EventLogService eventLogService) {
+                         EventLogService eventLogService,
+                         Leadership leadership) {
         this.kafkaTemplate = kafkaTemplate;
         this.alarmTopic = alarmTopic;
         this.eventLogService = eventLogService;
+        this.leadership = leadership;
     }
 
     /**
@@ -49,7 +54,7 @@ public class AlarmProducer {
      */
     public void sendAlarm(TagEntity tag, String alarmId, String severity, String message,
                           Double threshold, Double currentValue, boolean cleared) {
-        if (!kafkaEnabled || !publishAlarms) {
+        if (!kafkaEnabled || !publishAlarms || !leadership.isActive()) {
             return;
         }
 

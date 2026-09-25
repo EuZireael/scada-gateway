@@ -1,6 +1,7 @@
 package com.scada.gateway.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.scada.gateway.ha.Leadership;
 import com.scada.gateway.kafka.producer.EventProducer;
 import com.scada.gateway.model.entity.EventLogEntity;
 import com.scada.gateway.model.entity.TagEntity;
@@ -29,12 +30,16 @@ public class EventLogService {
     private final EventLogRepository eventLogRepository;
     private final EventProducer eventProducer;
     private final ObjectMapper objectMapper;
+    /** Горячий резерв: пара может писать в общую БД — метим, чей экземпляр записал событие. */
+    private final Leadership leadership;
 
     public EventLogService(EventLogRepository eventLogRepository,
-                           EventProducer eventProducer) {
+                           EventProducer eventProducer,
+                           Leadership leadership) {
         this.eventLogRepository = eventLogRepository;
         this.eventProducer = eventProducer;
         this.objectMapper = new ObjectMapper();
+        this.leadership = leadership;
     }
 
     /**
@@ -228,6 +233,12 @@ public class EventLogService {
             event.setUserId(userId);
             event.setAcknowledged(false);
             
+            if (leadership.isHaEnabled()) {
+                Map<String, Object> marked = details != null ? new HashMap<>(details) : new HashMap<>();
+                marked.put("instance", leadership.instanceId());
+                marked.put("role", leadership.isActive() ? "ACTIVE" : "STANDBY");
+                details = marked;
+            }
             if (details != null && !details.isEmpty()) {
                 event.setDetails(objectMapper.writeValueAsString(details));
             }

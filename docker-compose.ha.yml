@@ -1,0 +1,63 @@
+# ============================================================================
+# Горячее резервирование шлюза: два экземпляра на одних топиках, активный — один.
+# Надстройка над docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d --build
+#   curl -s localhost:8888/api/ha ; curl -s localhost:8889/api/ha   # кто ACTIVE, кто STANDBY
+#   docker kill -s KILL scada-gateway        # уронить активный — резерв подхватит за ~2 c
+#
+# Выборы — через группу Kafka (SCADA-gateway/.../ha/LeaderElector). Резервный держит
+# соединения с ПЛК и опрашивает их, но в Kafka не публикует и команды не исполняет.
+# Оба экземпляра — с одним controllers.yaml и общей БД (синхронизация конфига под
+# advisory-локом; события в event_log помечены details.instance).
+# ============================================================================
+services:
+  # Брокер разрешает короткую сессию: падение активного замечается за 2 c, а не за 6
+  # (минимум по умолчанию). На заводском кластере — та же настройка брокера.
+  kafka:
+    environment:
+      KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS: 1000
+
+  gateway:
+    environment:
+      GATEWAY_HA_ENABLED: "true"
+      GATEWAY_HA_INSTANCE_ID: "gateway-1"
+      GATEWAY_HA_SESSION_TIMEOUT_MS: "2000"
+      GATEWAY_HA_HEARTBEAT_INTERVAL_MS: "500"
+
+  gateway-2:
+    build: ./SCADA-gateway
+    container_name: scada-gateway-2
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/scada_db"
+      SPRING_DATASOURCE_USERNAME: "scada_user"
+      SPRING_DATASOURCE_PASSWORD: "scada_password"
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      SIM_HOST: "simulator"
+      GATEWAY_HA_ENABLED: "true"
+      GATEWAY_HA_INSTANCE_ID: "gateway-2"
+      GATEWAY_HA_SESSION_TIMEOUT_MS: "2000"
+      GATEWAY_HA_HEARTBEAT_INTERVAL_MS: "500"
+    ports:
+      - "8889:8888"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      simulator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8888/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+        reservations:
+          memory: 512M
+    networks: [scada]
