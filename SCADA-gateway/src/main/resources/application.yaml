@@ -13,9 +13,12 @@ server:
 # yaml-language-server: $schema=
 
 spring:
-  # Контроллеры и теги вынесены в отдельный файл (был раздут до 915 КБ).
+  # Контроллеры и теги вынесены в отдельный файл (был раздут до 915 КБ). По умолчанию —
+  # встроенный конфиг стенда (симулятор). Реальная станция — внешний файл без пересборки:
+  #   CONTROLLERS_CONFIG=file:/app/config/BN1_MCA1.yaml PAC_HOST=<IP контроллера>
+  # (config/stations/*.yaml генерирует tools/station_config.sh из базы каналов и проекта ПЛК).
   config:
-    import: classpath:controllers.yaml
+    import: ${CONTROLLERS_CONFIG:classpath:controllers.yaml}
   application:
     name: scada-gateway
 
