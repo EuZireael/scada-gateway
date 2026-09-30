@@ -35,12 +35,16 @@ import java.util.regex.Pattern;
  *   <li>writable — по правилам шлюза (writable-rules.tsv: команды и уставки), а не true у всех:
  *       запись в показание датчика шлюз должен отклонять;</li>
  *   <li>enabled — из .cdbx (выключенные каналы не опрашиваются);</li>
- *   <li>nodeId — «pac:&lt;имя в ПЛК&gt;»: стабилен без БД монитора; channelId не задаётся
- *       (это id узла в БД монитора, вне её не известен).</li>
+ *   <li>nodeId — по имени в ПЛК: для OPC UA {@code ns=2;s=<прибор>.<поле>} (адресное
+ *       пространство OPC UA-фасада эмулятора, ptusa-opcua/), для PAC {@code pac:<имя в ПЛК>};
+ *       channelId не задаётся (это id узла в БД монитора, вне её не известен).</li>
  * </ul>
  *
+ * <p>Протокол по умолчанию — OPC UA (все каналы станции через OPC UA-сервер); PAC — прямое
+ * подключение шлюза к ptusa по driver-master.
+ *
  * <p>args: cdbx, папка проекта ПЛК, площадка, проект, id контроллера, endpoint, rules.tsv,
- * выходной yaml.
+ * выходной yaml, протокол (opcua|pac).
  */
 public class StationConfig {
 
@@ -49,8 +53,8 @@ public class StationConfig {
     private static final Pattern DEVICE_KIND = Pattern.compile("^[A-Z_]+");
 
     public static void main(String[] args) throws IOException {
-        if (args.length != 8) {
-            System.err.println("args: <cdbx> <project-dir> <site> <project> <controller-id> <endpoint> <rules.tsv> <out.yaml>");
+        if (args.length != 9 || !List.of("opcua", "pac").contains(args[8])) {
+            System.err.println("args: <cdbx> <project-dir> <site> <project> <controller-id> <endpoint> <rules.tsv> <out.yaml> <opcua|pac>");
             System.exit(2);
         }
         Path cdbx = Path.of(args[0]);
@@ -59,6 +63,7 @@ public class StationConfig {
         Rules rules = Rules.load(Path.of(args[6]));
         Overrides overrides = Overrides.load(Path.of(args[6]).resolveSibling("overrides.tsv"));
         Path out = Path.of(args[7]);
+        boolean opcua = "opcua".equals(args[8]);
 
         CdbxFile file = CdbxParser.parse(Files.readAllBytes(cdbx));
         PlcProject plc = PlcProjectParser.parse(read(projectDir.resolve("main.io.lua")),
@@ -113,23 +118,26 @@ public class StationConfig {
             if (on) enabled++;
             if (rw) writable++;
             byType.merge(dataType, 1, Integer::sum);
+            String nodeId = opcua ? "ns=2;s=" + opcNodeName(legacy.object(), legacy.field()) : "pac:" + ch.name();
             tags.append("        - {name: \"").append(q(path))
-                    .append("\", nodeId: \"pac:").append(q(ch.name()))
+                    .append("\", nodeId: \"").append(q(nodeId))
                     .append("\", deviceName: \"").append(q(legacy.object()))
                     .append("\", fieldName: \"").append(q(legacy.field()))
                     .append("\", deviceType: \"").append(q(kind))
-                    .append("\", protocol: pac, dataType: ").append(dataType)
+                    .append("\", protocol: ").append(opcua ? "opcua" : "pac").append(", dataType: ").append(dataType)
                     .append(", pollingRate: 1000, enabled: ").append(on)
                     .append(", writable: ").append(rw).append("}\n");
         }
 
         String yaml = "# ============================================================================\n"
-                + "# Реальная станция " + project + " (" + site + "): один контроллер ptusa, все каналы — PAC.\n"
+                + "# Реальная станция " + project + " (" + site + "): один контроллер ptusa, все каналы — "
+                + (opcua ? "OPC UA\n#   (OPC UA-фасад эмулятора ptusa-opcua/: узел ns=2;s=<прибор>.<поле>).\n" : "PAC (driver-master).\n")
                 + "# СГЕНЕРИРОВАНО tools/station_config.sh — не править руками.\n"
                 + "#   база каналов: " + cdbx.getFileName() + ", проект ПЛК: " + projectDir.getFileName() + "\n"
                 + "#   имена (Kafka-key) — как у объектной базы каналов монитора (его код импорта .cdbx);\n"
                 + "#   writable — tools/station-config/writable-rules.tsv.\n"
-                + "# Адрес контроллера — env PAC_HOST (в публичный репозиторий не пишется).\n"
+                + (opcua ? "# Адрес OPC UA-сервера — env PLC_HOST (IP объекта в публичный репозиторий не пишется).\n"
+                         : "# Адрес контроллера — env PAC_HOST (в публичный репозиторий не пишется).\n")
                 + "#   каналов " + total + ", включено " + enabled + ", на запись " + writable + "; типы " + byType + "\n"
                 + "# ============================================================================\n"
                 + "opcua:\n"
@@ -151,6 +159,15 @@ public class StationConfig {
             System.out.println("Нет правила записи — только чтение (" + unknownRule.size() + " видов поля):");
             unknownRule.forEach((k, n) -> System.out.println("  " + k + "\t×" + n));
         }
+    }
+
+    /**
+     * Имя узла OPC UA по имени в ПЛК: {@code LINE1V0.ST}, {@code OBJECT1.RT_PAR_F[12]},
+     * {@code LINE1G1.ST_CH[1]} — пробелы внутри индекса (так в базе каналов) убираются. Так же
+     * узлы называет OPC UA-фасад эмулятора (ptusa-opcua/bridge.py).
+     */
+    static String opcNodeName(String object, String field) {
+        return object + "." + INDEX.matcher(field).replaceAll("[$1]");
     }
 
     /**

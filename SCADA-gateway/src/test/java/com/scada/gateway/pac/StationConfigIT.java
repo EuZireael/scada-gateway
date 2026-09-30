@@ -15,7 +15,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Конфиг реальной станции (config/stations/*.yaml, tools/station_config.sh) против настоящей
- * прошивки: каждый включённый канал читается кодом шлюза (PacConnection → снимок t →
+ * прошивки: существует ли каждый включённый канал в ПЛК (сверка по driver-master — так же, как
+ * его видит OPC UA-фасад ptusa-opcua/, сквозной путь по OPC UA — стенд docker-compose.moika.yml).
+ * Каждый включённый канал читается кодом шлюза (PacConnection → снимок t →
  * PacLua.read) и приходит со значением своего dataType. Эталон — эмулятор ptusa с проектом
  * станции (tools/ptusa_emulator.sh), значения там нулевые, но структура снимка — настоящая.
  *

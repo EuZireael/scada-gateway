@@ -454,11 +454,15 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
                         ReadResponse resp = client.read(0.0, TimestampsToReturn.Both, reads)
                                 .get(opcuaOpTimeoutMs, TimeUnit.MILLISECONDS);
                         DataValue[] results = resp.getResults();
+                        int goodNodes = 0;
+                        String firstBadStatus = null;
                         for (int i = 0; i < opcTags.size(); i++) {
                             TagEntity tag = opcTags.get(i);
                             DataValue dv = (results != null && i < results.length) ? results[i] : null;
                             Object val = dv != null ? ValueCodec.extractValue(dv.getValue()) : null;
                             String quality = (dv != null && dv.getStatusCode().isGood()) ? "GOOD" : "BAD";
+                            if ("GOOD".equals(quality)) goodNodes++;
+                            else if (firstBadStatus == null) firstBadStatus = dv != null ? dv.getStatusCode().toString() : "нет результата";
                             // A2: метка времени = момент снятия значения сервером (sourceTime),
                             // а не момент отправки. Фолбэк serverTime → now.
                             Instant ts = sourceTimeOf(dv);
@@ -469,8 +473,16 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
                                 telemetryProcessor.processTagValue(tag, val, quality, ts, batch);
                             }
                         }
-                        // Запрос прошёл → связь есть (пер-узловые BAD-статусы связь не роняют).
-                        goodReads = opcTags.size();
+                        // Запрос прошёл, и хотя бы один узел дал значение → связь есть (BAD у отдельных
+                        // узлов связь не роняет). Все узлы BAD — сервер жив, а данных за ним нет
+                        // (потеряна шина/рантайм ПЛК, у OPC UA-фасада — связь с прошивкой): значения
+                        // замерли бы на мониторе при «живой» связи, поэтому это обрыв.
+                        if (goodNodes > 0) {
+                            goodReads = opcTags.size();
+                        } else {
+                            badReads = opcTags.size();
+                            lastErr = "все " + opcTags.size() + " узлов вернули BAD (" + firstBadStatus + ")";
+                        }
                     } catch (Exception e) {
                         // Обрыв на уровне запроса: весь цикл — BAD (супервизор переподнимет).
                         // Таймаут метим отдельно — это «тихое» зависание, а не обычная ошибка.

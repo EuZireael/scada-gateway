@@ -4,8 +4,9 @@
 #
 # Имена каналов (Kafka-key) строит код импорта монитора — исходники берутся из соседнего
 # репозитория scada-editor-backend и компилируются вместе с генератором, поэтому ключи
-# совпадают с объектной базой каналов монитора. Все каналы — PAC (driver-master); адрес
-# контроллера подставляется при развёртывании: PAC_HOST (в публичный репозиторий не пишется).
+# совпадают с объектной базой каналов монитора. Все каналы — OPC UA (узлы OPC UA-фасада
+# эмулятора, ptusa-opcua/; адрес — PLC_HOST при развёртывании) или, с PROTOCOL=pac, — PAC
+# (driver-master напрямую к ptusa, адрес — PAC_HOST). IP объекта в публичный репозиторий не пишется.
 #
 #   tools/station_config.sh <база.cdbx> <папка проекта ПЛК> [площадка] [проект] [выход]
 #     площадка/проект — как при импорте .cdbx в монитор (по умолчанию Барановичи-1 / BN1_MCA1)
@@ -34,9 +35,16 @@ if [ "${1:-}" = "--derive-rules" ]; then
   exit 0
 fi
 
+PROTOCOL="${PROTOCOL:-opcua}"   # opcua (по умолчанию) | pac
 CDBX="$1"; PROJECT_DIR="$2"
 SITE="${3:-Барановичи-1}"; PROJECT="${4:-BN1_MCA1}"
 OUT="${5:-config/stations/$PROJECT.yaml}"
 mkdir -p "$(dirname "$OUT")"
-java -cp "$BUILD" StationConfig "$CDBX" "$PROJECT_DIR" "$SITE" "$PROJECT" \
-  "pac-$(echo "$PROJECT" | tr '[:upper:]_' '[:lower:]-')" 'pac://${PAC_HOST}:${PAC_PORT:10000}' "$RULES" "$OUT"
+ID="$(echo "$PROJECT" | tr '[:upper:]_' '[:lower:]-')"
+if [ "$PROTOCOL" = "pac" ]; then
+  java -cp "$BUILD" StationConfig "$CDBX" "$PROJECT_DIR" "$SITE" "$PROJECT" \
+    "pac-$ID" 'pac://${PAC_HOST}:${PAC_PORT:10000}' "$RULES" "$OUT" pac
+else
+  java -cp "$BUILD" StationConfig "$CDBX" "$PROJECT_DIR" "$SITE" "$PROJECT" \
+    "opcua-$ID" 'opc.tcp://${PLC_HOST}:${PLC_OPCUA_PORT:4840}' "$RULES" "$OUT" opcua
+fi
