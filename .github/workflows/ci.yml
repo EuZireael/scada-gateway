@@ -65,7 +65,7 @@ jobs:
 
       - name: Byte-compile all Python
         run: |
-          find plc-simulator loadtest tools -name '*.py' -print0 \
+          find plc-simulator ptusa-opcua loadtest tools -name '*.py' -print0 \
             | xargs -0 python -m py_compile
           echo "OK: все .py компилируются"
 
@@ -93,6 +93,28 @@ jobs:
 
       - name: Run pytest
         run: pytest
+
+  # ------------- OPC UA-фасад эмулятора ptusa (ptusa-opcua/) ---------------
+  # Настоящий OPC UA-сервер фасада + клиент против фейкового PAC: чтение из снимка, запись как
+  # команда прошивке, отказы, обрыв связи с прошивкой (все узлы BadCommunicationError), возврат.
+  ptusa-opcua-tests:
+    name: ptusa-opcua tests (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ptusa-opcua
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'   # asyncua 1.1.8 на 3.12+ не работает (баг issubclass)
+          cache: pip
+          cache-dependency-path: ptusa-opcua/requirements.txt
+
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest -q tests
 
   # ---------------- CD: сборка и публикация docker-образа шлюза -------------
   # «D» из CI/CD. На PR — только СОБИРАЕТ образ (проверка, что Dockerfile рабочий).

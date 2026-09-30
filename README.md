@@ -38,6 +38,13 @@
 curl -s http://localhost:8888/actuator/health          # {"status":"UP"}
 ```
 
+Реальная станция — один контроллер ptusa, шлюз ходит к нему **только по OPC UA**: данные и
+команды идут через OPC UA-фасад эмулятора мойки (`ptusa-opcua/`, стенд —
+`docker-compose.moika.yml`), конфиг генерирует `tools/station_config.sh` из базы каналов и
+проекта ПЛК (`config/stations/BN1_MCA1.yaml`, запуск — `CONTROLLERS_CONFIG=file:… PLC_HOST=…`);
+подробности — SPECIFICATION §5. Для тех, кто делает монитор: `docs/MONITOR_INTEGRATION.md`
+(запуск в его стенде, новые имена каналов); стенд одной командой — `./up-moika.sh`.
+
 ## Архитектура
 
 ```
