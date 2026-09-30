@@ -1,5 +1,6 @@
 package com.scada.gateway.controller;
 
+import com.scada.gateway.ha.LeaderElector;
 import com.scada.gateway.model.entity.EventLogEntity;
 import com.scada.gateway.service.EventLogService;
 import org.springframework.web.bind.annotation.*;
@@ -16,9 +17,26 @@ import java.util.Map;
 public class MonitoringController {
 
     private final EventLogService eventLogService;
+    private final LeaderElector leaderElector;
 
-    public MonitoringController(EventLogService eventLogService) {
+    public MonitoringController(EventLogService eventLogService, LeaderElector leaderElector) {
         this.eventLogService = eventLogService;
+        this.leaderElector = leaderElector;
+    }
+
+    /**
+     * Роль экземпляра в паре горячего резерва. GET /api/ha →
+     * {enabled, instance, role: ACTIVE|STANDBY, since, group}.
+     */
+    @GetMapping("/ha")
+    public Map<String, Object> ha() {
+        Map<String, Object> response = new HashMap<>();
+        response.put("enabled", leaderElector.isHaEnabled());
+        response.put("instance", leaderElector.instanceId());
+        response.put("role", leaderElector.isActive() ? "ACTIVE" : "STANDBY");
+        response.put("since", leaderElector.roleSince().toString());
+        response.put("group", leaderElector.groupId());
+        return response;
     }
 
     /** Лёгкая проверка живости шлюза. GET /api/health → {status:UP}. */

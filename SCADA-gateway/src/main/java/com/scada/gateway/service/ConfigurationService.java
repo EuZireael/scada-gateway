@@ -7,6 +7,9 @@ import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.repository.ControllerRepository;
 import com.scada.gateway.repository.TagRepository;
 import jakarta.annotation.PostConstruct;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -35,6 +38,8 @@ public class ConfigurationService {
     private final ControllerRepository controllerRepository;
     private final TagRepository tagRepository;
     private final OpcUaConfig opcUaConfig;
+    private final TransactionTemplate transactions;
+    private final JdbcTemplate jdbc;
 
     private Map<Long, ControllerEntity> controllerCache = new HashMap<>();
     private Map<Long, TagEntity> tagCache = new HashMap<>();
@@ -46,20 +51,32 @@ public class ConfigurationService {
     // Явный конструктор (вместо @RequiredArgsConstructor)
     public ConfigurationService(ControllerRepository controllerRepository,
                                 TagRepository tagRepository,
-                                OpcUaConfig opcUaConfig) {
+                                OpcUaConfig opcUaConfig,
+                                PlatformTransactionManager transactionManager,
+                                JdbcTemplate jdbc) {
         this.controllerRepository = controllerRepository;
         this.tagRepository = tagRepository;
         this.opcUaConfig = opcUaConfig;
+        this.transactions = new TransactionTemplate(transactionManager);
+        this.jdbc = jdbc;
     }
 
     /** Старт: синхронизирует БД с YAML и прогревает кэши. Вызывается один раз (@PostConstruct). */
     @PostConstruct
-    @Transactional
     public void initDatabaseFromYaml() {
         // Полная синхронизация БД с YAML: добавляем новые, обновляем изменённые
         // и удаляем исчезнувшие из конфига контроллеры/теги. Идемпотентно —
         // выполняется при каждом старте, ручная чистка БД больше не нужна.
-        syncDatabaseFromYaml();
+        //
+        // Одной транзакцией под advisory-локом: пара горячего резерва на общей БД стартует
+        // одновременно, и без лока оба экземпляра вставляли бы одни и те же контроллеры
+        // (нарушение UNIQUE → падение старта). Второй ждёт первого и видит готовые строки.
+        // (@Transactional на @PostConstruct не работает — вызов идёт мимо прокси, поэтому
+        // транзакция задаётся явно.)
+        transactions.executeWithoutResult(status -> {
+            jdbc.execute("SELECT pg_advisory_xact_lock(hashtext('scada-gateway:config-sync'))");
+            syncDatabaseFromYaml();
+        });
 
         // Загружаем в кэш
         loadConfiguration();

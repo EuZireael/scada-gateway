@@ -2,6 +2,7 @@ package com.scada.gateway.kafka;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.scada.gateway.ha.Leadership;
 import com.scada.gateway.kafka.producer.TelemetryProducer;
 import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.service.EventLogService;
@@ -127,7 +128,7 @@ class TelemetryKafkaContractTest {
         TelemetryProducer telemetryProducer(KafkaTemplate<String, Object> template,
                                             @Value("${kafka.topics.telemetry}") String topic) {
             // EventLogService в этом тесте не нужен по сути — мок.
-            return new TelemetryProducer(template, topic, mock(EventLogService.class));
+            return new TelemetryProducer(template, topic, mock(EventLogService.class), Leadership.ALWAYS_ACTIVE);
         }
     }
 }

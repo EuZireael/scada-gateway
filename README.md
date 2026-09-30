@@ -74,6 +74,10 @@ curl -s http://localhost:8888/actuator/health          # {"status":"UP"}
   модель — `tools/build_data_model.py`, проверка по всему архиву — `tools/check_data_model.py`.
 - **Авто-переподключение** — супервизор (`@Scheduled`), детект «тихой» смерти сессии,
   токен поколения против flapping.
+- **Горячее резервирование** — два экземпляра, активный выбирается через группу Kafka;
+  резервный держит связь с ПЛК и подхватывает за ~2 c при падении активного (0,35 c при
+  штатной остановке). `docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d`,
+  роль — `GET /api/ha`; подробности — SPECIFICATION §8.
 - **Журнал и события** — `event_log` в БД + топики `scada-events` / `scada-alarms`.
 - **Алармы по уставкам** — edge-триггер, пороги из перцентилей p1/p99 архива, гистерезис.
 - **Команды оператора** — запись команд и уставок по OPC UA и PAC через `scada-commands`;

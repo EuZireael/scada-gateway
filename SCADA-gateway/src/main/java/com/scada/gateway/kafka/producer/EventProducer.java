@@ -1,5 +1,6 @@
 package com.scada.gateway.kafka.producer;
 
+import com.scada.gateway.ha.Leadership;
 import com.scada.gateway.kafka.dto.EventMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,10 +38,15 @@ public class EventProducer {
     @Value("${kafka.publish.events:false}")
     private boolean publishEvents;
 
+    /** Горячий резерв: события в Kafka шлёт только активный (резервный пишет их в свою БД). */
+    private final Leadership leadership;
+
     public EventProducer(KafkaTemplate<String, Object> kafkaTemplate,
-                         @Value("${kafka.topics.events}") String eventsTopic) {
+                         @Value("${kafka.topics.events}") String eventsTopic,
+                         Leadership leadership) {
         this.kafkaTemplate = kafkaTemplate;
         this.eventsTopic = eventsTopic;
+        this.leadership = leadership;
     }
 
     /**
@@ -50,7 +56,7 @@ public class EventProducer {
      */
     public void sendEvent(String eventType, String source, String severity,
                           String message, Map<String, Object> details) {
-        if (!kafkaEnabled || !publishEvents) {
+        if (!kafkaEnabled || !publishEvents || !leadership.isActive()) {
             return;
         }
 

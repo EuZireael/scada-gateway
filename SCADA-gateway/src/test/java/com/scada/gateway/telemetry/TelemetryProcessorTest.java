@@ -1,6 +1,7 @@
 package com.scada.gateway.telemetry;
 
 import com.scada.gateway.alarm.AlarmEvaluator;
+import com.scada.gateway.ha.Leadership;
 import com.scada.gateway.kafka.producer.TelemetryProducer;
 import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.model.entity.TelemetryEntity;
@@ -39,7 +40,7 @@ class TelemetryProcessorTest {
     @BeforeEach
     void setUp() {
         processor = new TelemetryProcessor(telemetryProducer, telemetryRepository, eventLog, alarmEvaluator,
-                new SimpleMeterRegistry());
+                new SimpleMeterRegistry(), Leadership.ALWAYS_ACTIVE);
     }
 
     private static TagEntity tag() {

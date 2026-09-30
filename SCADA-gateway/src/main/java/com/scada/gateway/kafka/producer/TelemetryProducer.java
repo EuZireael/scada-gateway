@@ -1,5 +1,6 @@
 package com.scada.gateway.kafka.producer;
 
+import com.scada.gateway.ha.Leadership;
 import com.scada.gateway.kafka.dto.TelemetryMessage;
 import com.scada.gateway.model.entity.TagEntity;
 import com.scada.gateway.service.EventLogService;
@@ -26,16 +27,20 @@ public class TelemetryProducer {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final String telemetryTopic;
     private final EventLogService eventLogService;
+    /** Горячий резерв: телеметрию публикует только активный экземпляр пары. */
+    private final Leadership leadership;
 
     @Value("${kafka.enabled:false}")
     private boolean kafkaEnabled;
 
     public TelemetryProducer(KafkaTemplate<String, Object> kafkaTemplate,
                              @Value("${kafka.topics.telemetry}") String telemetryTopic,
-                             EventLogService eventLogService) {
+                             EventLogService eventLogService,
+                             Leadership leadership) {
         this.kafkaTemplate = kafkaTemplate;
         this.telemetryTopic = telemetryTopic;
         this.eventLogService = eventLogService;
+        this.leadership = leadership;
     }
 
     /**
@@ -48,6 +53,9 @@ public class TelemetryProducer {
         if (!kafkaEnabled) {
             log.debug("Kafka disabled, skipping send for tag: {}", tag.getName());
             return;
+        }
+        if (!leadership.isActive()) {
+            return; // резервный экземпляр опрашивает ПЛК, но наружу молчит
         }
 
         try {
@@ -84,7 +92,7 @@ public class TelemetryProducer {
      * channelName = путь канала (id_node) = Kafka-key; тело — тот же триплет.
      */
     public void sendFieldTelemetry(String channelName, Object value, String quality, Instant timestamp) {
-        if (!kafkaEnabled) return;
+        if (!kafkaEnabled || !leadership.isActive()) return;
         try {
             TelemetryMessage message = new TelemetryMessage(value, quality, timestamp);
             kafkaTemplate.send(telemetryTopic, channelName, message)
