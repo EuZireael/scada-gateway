@@ -40,11 +40,14 @@ CDBX="$1"; PROJECT_DIR="$2"
 SITE="${3:-Барановичи-1}"; PROJECT="${4:-BN1_MCA1}"
 OUT="${5:-config/stations/$PROJECT.yaml}"
 mkdir -p "$(dirname "$OUT")"
+# WRITABLE=all (по умолчанию) — все числовые каналы на запись; WRITABLE=rules — только команды и
+# уставки (writable-rules.tsv), показания датчиков только чтение.
+JAVA_OPTS="-Dwritable=${WRITABLE:-all}"
 ID="$(echo "$PROJECT" | tr '[:upper:]_' '[:lower:]-')"
 if [ "$PROTOCOL" = "pac" ]; then
-  java -cp "$BUILD" StationConfig "$CDBX" "$PROJECT_DIR" "$SITE" "$PROJECT" \
+  java $JAVA_OPTS -cp "$BUILD" StationConfig "$CDBX" "$PROJECT_DIR" "$SITE" "$PROJECT" \
     "pac-$ID" 'pac://${PAC_HOST}:${PAC_PORT:10000}' "$RULES" "$OUT" pac
 else
-  java -cp "$BUILD" StationConfig "$CDBX" "$PROJECT_DIR" "$SITE" "$PROJECT" \
+  java $JAVA_OPTS -cp "$BUILD" StationConfig "$CDBX" "$PROJECT_DIR" "$SITE" "$PROJECT" \
     "opcua-$ID" 'opc.tcp://${PLC_HOST}:${PLC_OPCUA_PORT:4840}' "$RULES" "$OUT" opcua
 fi

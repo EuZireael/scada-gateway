@@ -32,8 +32,10 @@ import java.util.regex.Pattern;
  *
  * <p>Отличия от выгрузки монитора (GET /export/gateway):
  * <ul>
- *   <li>writable — по правилам шлюза (writable-rules.tsv: команды и уставки), а не true у всех:
- *       запись в показание датчика шлюз должен отклонять;</li>
+ *   <li>writable — по умолчанию (-Dwritable=all) ВСЕ числовые каналы: требование станции —
+ *       любой тег можно менять; проверено на прошивке, что она принимает запись в каждый из них.
+ *       Исключение — строки (set_cmd принимает только числа). -Dwritable=rules — по правилам
+ *       writable-rules.tsv (команды и уставки), показания датчиков только чтение;</li>
  *   <li>enabled — из .cdbx (выключенные каналы не опрашиваются);</li>
  *   <li>nodeId — по имени в ПЛК: для OPC UA {@code ns=2;s=<прибор>.<поле>} (адресное
  *       пространство OPC UA-фасада эмулятора, ptusa-opcua/), для PAC {@code pac:<имя в ПЛК>};
@@ -50,6 +52,8 @@ public class StationConfig {
 
     /** Индекс массива; в новой базе каналов бывает с пробелами: ST_CH[ 1 ]. */
     private static final Pattern INDEX = Pattern.compile("\\[\\s*(\\d+)\\s*\\]");
+    /** -Dwritable=all (по умолчанию): все числовые каналы на запись; rules — по writable-rules.tsv. */
+    private static final boolean WRITE_ALL = !"rules".equals(System.getProperty("writable", "all"));
     private static final Pattern DEVICE_KIND = Pattern.compile("^[A-Z_]+");
 
     public static void main(String[] args) throws IOException {
@@ -102,6 +106,7 @@ public class StationConfig {
                 unknownRule.merge(kind + "\t" + Rules.fieldKey(legacy.field()), 1, Integer::sum);
                 rw = false; // нет правила — только чтение (безопасно)
             }
+            if (WRITE_ALL) rw = !"STRING".equals(dataType);
             boolean on = !"0".equals(ch.enabled().trim());
             // Объекта нет в проекте ПЛК (OBJECT4 при трёх техобъектах, прибор со старым именем) —
             // значения не будет никогда: канал выключен. SYSTEM — таблица самой ptusa, есть всегда.
@@ -135,7 +140,8 @@ public class StationConfig {
                 + "# СГЕНЕРИРОВАНО tools/station_config.sh — не править руками.\n"
                 + "#   база каналов: " + cdbx.getFileName() + ", проект ПЛК: " + projectDir.getFileName() + "\n"
                 + "#   имена (Kafka-key) — как у объектной базы каналов монитора (его код импорта .cdbx);\n"
-                + "#   writable — tools/station-config/writable-rules.tsv.\n"
+                + (WRITE_ALL ? "#   writable — все числовые каналы (строки — только чтение: set_cmd принимает числа).\n"
+                             : "#   writable — tools/station-config/writable-rules.tsv.\n")
                 + (opcua ? "# Адрес OPC UA-сервера — env PLC_HOST (IP объекта в публичный репозиторий не пишется).\n"
                          : "# Адрес контроллера — env PAC_HOST (в публичный репозиторий не пишется).\n")
                 + "#   каналов " + total + ", включено " + enabled + ", на запись " + writable + "; типы " + byType + "\n"
