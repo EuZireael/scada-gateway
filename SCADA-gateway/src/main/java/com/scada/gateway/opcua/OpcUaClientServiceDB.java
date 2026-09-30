@@ -27,6 +27,7 @@ import org.eclipse.milo.opcua.stack.core.types.structured.EndpointDescription;
 import org.eclipse.milo.opcua.stack.core.types.structured.ReadValueId;
 import org.eclipse.milo.opcua.stack.core.types.structured.ReadResponse;
 import org.eclipse.milo.opcua.stack.core.AttributeId;
+import org.eclipse.milo.opcua.stack.core.util.EndpointUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -331,6 +332,19 @@ public class OpcUaClientServiceDB implements TagCatalog, OpcUaClientRegistry {
             }
 
             EndpointDescription endpoint = endpoints.get(0);
+            // Ходим по адресу из КОНФИГА, а не по тому, что сервер анонсирует при discovery: за
+            // Docker/NAT/прокси анонс — имя, которого у клиента нет (opc.tcp://localhost:4840 у
+            // сервера в контейнере, у шлюза в другом контейнере это он сам). Хост и порт подменяем,
+            // остальное (политика безопасности, токены) — как анонсировал сервер.
+            String configuredHost = EndpointUtil.getHost(controller.getEndpoint());
+            int configuredPort = EndpointUtil.getPort(controller.getEndpoint());
+            if (configuredHost != null && configuredPort > 0
+                    && (!configuredHost.equalsIgnoreCase(EndpointUtil.getHost(endpoint.getEndpointUrl()))
+                        || configuredPort != EndpointUtil.getPort(endpoint.getEndpointUrl()))) {
+                log.debug("OPC UA {}: сервер анонсирует {}, подключаюсь по адресу из конфига {}:{}",
+                        controller.getName(), endpoint.getEndpointUrl(), configuredHost, configuredPort);
+                endpoint = EndpointUtil.updateUrl(endpoint, configuredHost, configuredPort);
+            }
 
             OpcUaClientConfig config = OpcUaClientConfig.builder()
                     .setApplicationName(LocalizedText.english("SCADA Gateway"))

@@ -3,9 +3,20 @@
 # BN1-МСА1 (папка Moika — проприетарная, в репозиторий не входит), шлюз ходит к ней только
 # по OPC UA через OPC UA-фасад (ptusa-opcua/). Python-симулятора здесь нет.
 #
-#   MOIKA_PROJECT=../Moika/BN1-CIP1 docker compose -f docker-compose.moika.yml up -d --build
-#   curl -s localhost:8888/actuator/health
-#   docker compose -f docker-compose.moika.yml down        # остановить (данные БД сохранятся)
+# Два режима (папка проекта ПЛК — переменная MOIKA_PROJECT, обязательна):
+#
+#   1) ВЕСЬ стенд: прошивка + фасад + шлюз + Kafka + Postgres (нужен собранный jar шлюза —
+#      ./up-moika.sh соберёт его сам):
+#        ./up-moika.sh                                    # Linux/macOS
+#        docker compose -f docker-compose.moika.yml up -d --build           # jar уже собран
+#
+#   2) ТОЛЬКО контроллер (прошивка + фасад): шлюз и Kafka — свои, на хосте (так запускает стенд
+#      монитор). OPC UA станции — opc.tcp://localhost:4840:
+#        docker compose -f docker-compose.moika.yml up -d --build ptusa ptusa-opcua
+#      шлюз: CONTROLLERS_CONFIG=file:<путь>/config/stations/BN1_MCA1.yaml PLC_HOST=localhost
+#
+#   curl -s localhost:8888/actuator/health                   # режим 1
+#   docker compose -f docker-compose.moika.yml down          # остановить (данные БД сохранятся)
 #
 # Порты на хост — те же, что у стенда с симулятором (docker-compose.yml): одновременно не
 # поднимать. OPC UA фасада — :4840, driver-master прошивки — :10100 (для отладки).
@@ -89,8 +100,12 @@ services:
       PAC_HOST: ptusa
       PAC_PORT: "10000"
       STATION_CONFIG: /config/station.yaml
-      # Анонсируемый адрес должен резолвиться у клиента (шлюз в этой же сети).
-      OPCUA_ENDPOINT: "opc.tcp://ptusa-opcua:4840"
+      # Адрес, который сервер анонсирует при discovery. Шлюз подключается по адресу из своего
+      # конфига и анонс игнорирует (хост/порт подменяются), так что localhost годится и для шлюза
+      # в контейнере, и для шлюза на хосте; для сторонних клиентов OPC UA (UaExpert и т.п.) —
+      # адрес, по которому они сюда доходят.
+      OPCUA_ENDPOINT: "${OPCUA_ENDPOINT:-opc.tcp://localhost:4840}"
+      OPCUA_BIND: "0.0.0.0:4840"
     volumes:
       - ./config/stations/BN1_MCA1.yaml:/config/station.yaml:ro
     ports:
@@ -110,6 +125,9 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       CONTROLLERS_CONFIG: "file:/app/config/station.yaml"
       PLC_HOST: "ptusa-opcua"
+      # Кадры BAD при обрыве связи (value=null, quality=BAD): монитор их ждёт — иначе тег на обрыве
+      # замирает на последнем значении и выглядит живым.
+      GATEWAY_SEND_BAD_FRAMES: "true"
     volumes:
       - ./config/stations/BN1_MCA1.yaml:/app/config/station.yaml:ro
     ports:

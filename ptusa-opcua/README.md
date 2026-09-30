@@ -18,4 +18,6 @@ OPC UA-сервер прошивки (`--opc r|rw`) публикует толь�
 прошивки): `pip install -r requirements.txt pytest && python -m pytest -q tests` (Python 3.11).
 
 Настройки: `PAC_HOST`/`PAC_PORT` (прошивка), `STATION_CONFIG` (`config/stations/*.yaml`),
-`OPCUA_ENDPOINT` (анонсируемый адрес), `POLL_MS` (период снимка, 500).
+`OPCUA_ENDPOINT` (адрес, который сервер анонсирует клиентам: `localhost` — шлюз на хосте,
+имя сервиса — шлюз в сети compose; клиент после discovery идёт именно по нему),
+`OPCUA_BIND` (на чём слушать, `0.0.0.0:4840`), `POLL_MS` (период снимка, 500).

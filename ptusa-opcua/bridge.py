@@ -22,8 +22,11 @@ SYSTEM, а запись state на прибор не действует. Шлю�
 Переменные окружения:
   PAC_HOST, PAC_PORT   — эмулятор ptusa (driver-master), по умолчанию ptusa:10000
   STATION_CONFIG       — конфиг станции, по умолчанию /config/station.yaml
-  OPCUA_ENDPOINT       — адрес, который анонсирует сервер (резолвимый клиентом), по умолчанию
-                         opc.tcp://0.0.0.0:4840
+  OPCUA_ENDPOINT       — адрес, который сервер АНОНСИРУЕТ клиентам; после discovery клиент идёт
+                         именно по нему, поэтому он должен резолвиться у клиента: localhost — шлюз
+                         на хосте (порт проброшен), имя сервиса — шлюз в сети compose. По умолчанию
+                         opc.tcp://localhost:4840
+  OPCUA_BIND           — на чём слушать, по умолчанию 0.0.0.0:4840 (не зависит от анонса)
   POLL_MS              — период снимка, по умолчанию 500
 """
 import asyncio
@@ -193,10 +196,14 @@ class Bridge:
         self.ns = 0
         self.stats = {"polls": 0, "commands": 0, "rejected": 0}
 
-    async def build(self, endpoint: str):
+    async def build(self, endpoint: str, bind: Optional[tuple] = None):
         self.server = Server()
         await self.server.init()
         self.server.set_endpoint(endpoint)
+        if bind is not None:
+            # asyncua по умолчанию слушает на хосте из endpoint (имя сервиса → IP контейнера,
+            # localhost → недоступен снаружи контейнера). Адрес привязки — отдельно от анонса.
+            self.server.socket_address = bind
         self.server.set_server_name("ptusa (эмулятор мойки) — OPC UA-фасад")
         self.server.set_security_policy([ua.SecurityPolicyType.NoSecurity])
         self.ns = await self.server.register_namespace(NAMESPACE_URI)
@@ -335,7 +342,8 @@ async def main():
     channels = load_channels(os.environ.get("STATION_CONFIG", "/config/station.yaml"))
     pac = PacClient(os.environ.get("PAC_HOST", "ptusa"), int(os.environ.get("PAC_PORT", "10000")))
     bridge = Bridge(channels, pac, int(os.environ.get("POLL_MS", "500")))
-    await bridge.build(os.environ.get("OPCUA_ENDPOINT", "opc.tcp://0.0.0.0:4840"))
+    host, _, port = os.environ.get("OPCUA_BIND", "0.0.0.0:4840").rpartition(":")
+    await bridge.build(os.environ.get("OPCUA_ENDPOINT", "opc.tcp://localhost:4840"), (host, int(port)))
     await bridge.run()
 
 
