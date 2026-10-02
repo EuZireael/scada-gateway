@@ -53,6 +53,8 @@ public class TelemetryHistoryFilter {
 
     private final Map<Long, Written> lastWritten = new ConcurrentHashMap<>();
     private final Clock clock;
+    /** Брать ли поканальные переопределения tags.history_* — у фильтра отправки в Kafka их нет. */
+    private final boolean tagOverrides;
 
     @org.springframework.beans.factory.annotation.Autowired
     public TelemetryHistoryFilter(
@@ -66,6 +68,13 @@ public class TelemetryHistoryFilter {
     /** Для тестов: часы, по которым считаются интервалы. */
     public TelemetryHistoryFilter(double defaultDeadband, double defaultDeadbandPercent,
                                   long defaultMinIntervalMs, long defaultMaxIntervalMs, Clock clock) {
+        this(defaultDeadband, defaultDeadbandPercent, defaultMinIntervalMs, defaultMaxIntervalMs, clock, true);
+    }
+
+    /** Без поканальных переопределений — для TelemetryPublishFilter. */
+    TelemetryHistoryFilter(double defaultDeadband, double defaultDeadbandPercent,
+                           long defaultMinIntervalMs, long defaultMaxIntervalMs, Clock clock, boolean tagOverrides) {
+        this.tagOverrides = tagOverrides;
         this.clock = clock;
         this.defaultDeadband = defaultDeadband;
         this.defaultDeadbandPercent = defaultDeadbandPercent;
@@ -95,11 +104,11 @@ public class TelemetryHistoryFilter {
             return true;
         }
         long elapsedMs = timestamp.toEpochMilli() - last.at().toEpochMilli();
-        long maxIntervalMs = orDefault(tag.getHistoryMaxIntervalMs(), defaultMaxIntervalMs);
+        long maxIntervalMs = orDefault(tagOverrides ? tag.getHistoryMaxIntervalMs() : null, defaultMaxIntervalMs);
         if (maxIntervalMs > 0 && elapsedMs >= maxIntervalMs) {
             return true;
         }
-        long minIntervalMs = orDefault(tag.getHistoryMinIntervalMs(), defaultMinIntervalMs);
+        long minIntervalMs = orDefault(tagOverrides ? tag.getHistoryMinIntervalMs() : null, defaultMinIntervalMs);
         if (minIntervalMs > 0 && elapsedMs < minIntervalMs) {
             return false;
         }
@@ -111,8 +120,8 @@ public class TelemetryHistoryFilter {
             double before = p.doubleValue();
             double delta = Math.abs(c.doubleValue() - before);
             double deadband = Math.max(
-                    orDefault(tag.getHistoryDeadband(), defaultDeadband),
-                    Math.abs(before) * orDefault(tag.getHistoryDeadbandPercent(), defaultDeadbandPercent) / 100.0);
+                    orDefault(tagOverrides ? tag.getHistoryDeadband() : null, defaultDeadband),
+                    Math.abs(before) * orDefault(tagOverrides ? tag.getHistoryDeadbandPercent() : null, defaultDeadbandPercent) / 100.0);
             return deadband > 0 ? delta > deadband : delta != 0;
         }
         return !Objects.equals(previous, current);

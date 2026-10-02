@@ -40,6 +40,7 @@ public class TelemetryProcessor {
     private final EventLogService eventLog;
     private final AlarmEvaluator alarmEvaluator;
     private final TelemetryHistoryFilter historyFilter;
+    private final TelemetryPublishFilter publishFilter;
     private final Counter telemetrySent;
 
     /** Считать ли пороги/алармы в шлюзе. По умолчанию false — алармы считает Monitor. */
@@ -64,6 +65,19 @@ public class TelemetryProcessor {
                               AlarmEvaluator alarmEvaluator,
                               TelemetryHistoryFilter historyFilter,
                               MeterRegistry meterRegistry) {
+        this(telemetryProducer, telemetryRepository, eventLog, alarmEvaluator, historyFilter,
+                TelemetryPublishFilter.disabled(), meterRegistry);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TelemetryProcessor(TelemetryProducer telemetryProducer,
+                              TelemetryRepository telemetryRepository,
+                              EventLogService eventLog,
+                              AlarmEvaluator alarmEvaluator,
+                              TelemetryHistoryFilter historyFilter,
+                              TelemetryPublishFilter publishFilter,
+                              MeterRegistry meterRegistry) {
+        this.publishFilter = publishFilter;
         this.historyFilter = historyFilter;
         this.telemetryProducer = telemetryProducer;
         this.telemetryRepository = telemetryRepository;
@@ -155,7 +169,14 @@ public class TelemetryProcessor {
             batch.add(buildTelemetry(tag, value, quality, timestamp));
         }
 
+        // В Kafka — по исключению: изменение, смена качества, полная отправка (TelemetryPublishFilter).
+        // BAD-кадр без включённого send-bad-frames не уходит вовсе — решение фильтру не отдаём,
+        // иначе он запомнил бы неотправленное как отправленное.
+        boolean publish = (value != null || sendBadFrames) && publishFilter.shouldPublish(tag, value, quality, timestamp);
         if (value != null) {
+            if (!publish) {
+                return;
+            }
             telemetryProducer.sendTelemetry(tag, value, quality, timestamp);
             telemetrySent.increment();
             // per-tag на каждый опрос — только debug (иначе поток INFO на 2471 тег/цикл).
@@ -164,7 +185,7 @@ public class TelemetryProcessor {
             // A3: NULL при обрыве. BAD-кадр шлём только при включённом флаге — иначе тег
             // замирает на последнем значении (безопаснее, чем falsy null на фронте без
             // правок B2/C4). Состояние связи фиксирует markControllerDown на уровне цикла.
-            if (sendBadFrames) {
+            if (publish) {
                 telemetryProducer.sendTelemetry(tag, null, quality, timestamp);
                 telemetrySent.increment();
             }
